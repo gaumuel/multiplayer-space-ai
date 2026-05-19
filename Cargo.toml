@@ -1,0 +1,17 @@
+[package]
+name = "space-ai-vs-ai-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy_ecs = "0.16"
+bevy_utils = "0.16"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.8"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+wtransport = "0.7"
+rcgen = "0.14"
+bytes = "1"
