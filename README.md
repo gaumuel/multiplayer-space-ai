@@ -117,8 +117,35 @@ cargo build --target wasm32-unknown-unknown --release
 - Base HP: 10,000
 - Win condition: destroy the enemy base
 
+## Obstacles
+
+Toggleable via checkbox in the lobby. When enabled, the arena spawns 8 symmetric obstacles:
+- **5 Static** — indestructible blockers
+- **2 Destructible** — 300 HP, can be destroyed by bullets
+- **1 Moving** — patrols back and forth, indestructible
+
+Ships are pushed out of obstacles, bullets are destroyed on contact.
+
+## Visual Effects
+
+- **Base explosion** — 150-particle burst when a base is destroyed (team-colored with white/yellow core)
+- 3-second delay before game over screen to watch the explosion
+
 ## Tech Stack
 
 - **Server**: Rust, bevy_ecs 0.16, wtransport, wasmtime, tokio
 - **Client**: TypeScript, React, WebGL2, Vite
 - **Protocol**: WebTransport (QUIC/HTTP3), binary snapshots, JSON control messages
+
+## TODO
+
+> To resume development, load context from `2105-nopathfinding.json`
+
+- [ ] AI pathfinding around obstacles (steering avoidance for built-in AI)
+- [ ] Fog of war / vision radius
+- [ ] Ship selection highlight (visual indicator on selected ship)
+- [ ] Sound effects
+- [ ] Leaderboard / match history
+- [ ] Client UI for WASM upload
+- [ ] Tournament mode (bracket system for AI vs AI)
+- [ ] Replay system (record + playback matches)

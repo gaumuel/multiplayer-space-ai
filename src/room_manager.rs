@@ -13,9 +13,9 @@ impl RoomManager {
         Self { rooms: HashMap::new() }
     }
 
-    pub fn create_room(&mut self, mode: GameMode) -> String {
+    pub fn create_room(&mut self, mode: GameMode, obstacles: bool) -> String {
         let id = generate_room_id();
-        let room = Room::new(id.clone(), mode);
+        let room = Room::new(id.clone(), mode, obstacles);
         self.rooms.insert(id.clone(), room);
         id
     }

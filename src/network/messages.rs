@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+fn default_true() -> bool { true }
+
 // === Client → Server messages ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -8,7 +10,7 @@ pub enum ClientMessage {
     /// List available rooms
     ListRooms,
     /// Create a new room with a game mode
-    CreateRoom { mode: GameMode },
+    CreateRoom { mode: GameMode, #[serde(default = "default_true")] obstacles: bool },
     /// Join an existing room
     JoinRoom { room_id: String, role: ClientRole },
     /// Leave current room

@@ -154,9 +154,9 @@ async fn handle_message(
                 ServerMessage::RoomList { rooms }
             )).await;
         }
-        ClientMessage::CreateRoom { mode } => {
-            let room_id = room_manager.create_room(mode.clone());
-            info!("Client {} created room {}", client_id, room_id);
+        ClientMessage::CreateRoom { mode, obstacles } => {
+            let room_id = room_manager.create_room(mode.clone(), obstacles);
+            info!("Client {} created room {} (obstacles: {})", client_id, room_id, obstacles);
 
             // Auto-join as player (unless AI vs AI)
             let team = match mode {

@@ -217,6 +217,13 @@ export class GameState {
           sizes[idx] = 200;
           break;
 
+        case EntityType.Obstacle:
+          colors[idx * 4] = 0.4;
+          colors[idx * 4 + 1] = 0.4;
+          colors[idx * 4 + 2] = 0.45;
+          sizes[idx] = 80;
+          break;
+
         default:
           colors[idx * 4] = 0.5;
           colors[idx * 4 + 1] = 0.5;

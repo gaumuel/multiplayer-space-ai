@@ -96,3 +96,28 @@ pub struct Bullet {
     pub damage: f32,
     pub lifetime: f32,
 }
+
+#[derive(Component, Clone, Copy, Debug)]
+pub struct Obstacle {
+    pub kind: ObstacleKind,
+    pub radius: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObstacleKind {
+    Static,
+    Destructible,
+    Moving,
+}
+
+/// For moving obstacles: defines patrol behavior
+#[derive(Component, Clone, Copy, Debug)]
+pub struct PatrolMovement {
+    pub start_x: f32,
+    pub start_y: f32,
+    pub end_x: f32,
+    pub end_y: f32,
+    pub speed: f32,
+    pub progress: f32, // 0.0 to 1.0
+    pub direction: f32, // 1.0 or -1.0
+}

@@ -23,6 +23,7 @@ export default function App() {
   const [team, setTeam] = useState<number>(255);
   const [roomId, setRoomId] = useState('');
   const [rooms, setRooms] = useState<any[]>([]);
+  const [obstaclesEnabled, setObstaclesEnabled] = useState(true);
   const [selectedShipId, setSelectedShipId] = useState<number | null>(null);
   const selectedShipIdRef = useRef<number | null>(null);
   const autoFireRef = useRef(false);
@@ -72,7 +73,8 @@ export default function App() {
         break;
       case 'GameOver':
         setWinner(msg.winner_team);
-        setAppState('ended');
+        // Delay showing game over screen so explosion plays out
+        setTimeout(() => setAppState('ended'), 3000);
         break;
       case 'JoinError':
         alert(msg.reason);
@@ -227,7 +229,7 @@ export default function App() {
 
   // Lobby actions
   const createRoom = (mode: string) => {
-    clientRef.current?.send({ type: 'CreateRoom', mode });
+    clientRef.current?.send({ type: 'CreateRoom', mode, obstacles: obstaclesEnabled });
   };
 
   const joinRoom = (id: string, role: string) => {
@@ -267,6 +269,16 @@ export default function App() {
               Watch AI vs AI
             </button>
           </div>
+
+          <label className="flex items-center gap-2 mb-6 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={obstaclesEnabled}
+              onChange={(e) => setObstaclesEnabled(e.target.checked)}
+              className="w-4 h-4 rounded"
+            />
+            <span className="text-white/70 text-sm">Enable obstacles</span>
+          </label>
 
           <div className="bg-black/40 backdrop-blur-md p-4 rounded-xl border border-white/10 w-96">
             <div className="flex justify-between items-center mb-3">

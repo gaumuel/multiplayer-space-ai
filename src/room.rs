@@ -6,6 +6,7 @@ use crate::systems::spawning::{spawn_system, SpawnConfig, SpawnTimer};
 use crate::systems::shooting::shooting_system;
 use crate::systems::collision::{bullet_collision_system, bullet_lifetime_system};
 use crate::systems::ai::ai_movement_system;
+use crate::systems::obstacles::{spawn_obstacles, obstacle_movement_system, ship_obstacle_collision_system, bullet_obstacle_collision_system};
 use crate::network::messages::{GameMode, RoomState, SpawnShipType, ServerMessage, PlayerCommand};
 use crate::network::protocol::{Snapshot, EntityDelta, EntityType};
 use crate::wasm_ai::runner::WasmAiRunner;
@@ -93,10 +94,11 @@ pub struct Room {
     pub players: [PlayerState; 2],
     pub spectators: Vec<usize>,
     pub tick_count: u32,
+    pub obstacles_enabled: bool,
 }
 
 impl Room {
-    pub fn new(id: String, mode: GameMode) -> Self {
+    pub fn new(id: String, mode: GameMode, obstacles_enabled: bool) -> Self {
         let mut world = World::new();
 
         world.insert_resource(SpawnConfig::default());
@@ -113,6 +115,9 @@ impl Room {
             shooting_system,
             bullet_collision_system,
             bullet_lifetime_system,
+            obstacle_movement_system,
+            ship_obstacle_collision_system,
+            bullet_obstacle_collision_system,
         ));
 
         // Spawn bases
@@ -126,6 +131,11 @@ impl Room {
             Health::new(10000.0),
             Base { team: Team::Enemy },
         ));
+
+        // Spawn obstacles if enabled
+        if obstacles_enabled {
+            spawn_obstacles(&mut world);
+        }
 
         let players = match mode {
             GameMode::AIVsAI => [
@@ -151,6 +161,7 @@ impl Room {
             players,
             spectators: Vec::new(),
             tick_count: 0,
+            obstacles_enabled,
         }
     }
 
@@ -297,6 +308,9 @@ impl Room {
             shooting_system,
             bullet_collision_system,
             bullet_lifetime_system,
+            obstacle_movement_system,
+            ship_obstacle_collision_system,
+            bullet_obstacle_collision_system,
         ));
 
         self.world.spawn((
@@ -309,6 +323,10 @@ impl Room {
             Health::new(10000.0),
             Base { team: Team::Enemy },
         ));
+
+        if self.obstacles_enabled {
+            spawn_obstacles(&mut self.world);
+        }
 
         for player in &mut self.players {
             player.selected_ship = None;
@@ -391,6 +409,20 @@ impl Room {
                 }),
                 health: Some(health.current),
                 max_health: Some(health.max),
+            });
+        }
+
+        let mut obs_query = self.world.query::<(Entity, &Position, &Obstacle, Option<&Health>)>();
+        for (entity, pos, obs, health) in obs_query.iter(&self.world) {
+            entities.push(EntityDelta {
+                id: entity.to_bits() as u32,
+                x: pos.x,
+                y: pos.y,
+                z: pos.z,
+                entity_type: EntityType::Obstacle,
+                team: None,
+                health: health.map(|h| h.current),
+                max_health: health.map(|h| h.max),
             });
         }
 

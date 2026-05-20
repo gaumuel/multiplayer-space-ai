@@ -3,3 +3,4 @@ pub mod spawning;
 pub mod shooting;
 pub mod collision;
 pub mod ai;
+pub mod obstacles;
