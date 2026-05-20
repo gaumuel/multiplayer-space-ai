@@ -205,6 +205,46 @@ impl Room {
         self.spectators.retain(|&id| id != client_id);
     }
 
+    /// Reset the room for a new game, keeping players in their slots
+    pub fn reset(&mut self) {
+        self.world = bevy_ecs::world::World::new();
+        self.world.insert_resource(SpawnConfig::default());
+        self.world.insert_resource(SpawnTimer::default());
+        self.world.insert_resource(crate::systems::shooting::BulletConfig::default());
+        self.world.insert_resource(crate::systems::collision::CollisionConfig::default());
+        self.world.insert_resource(GameTime::new());
+
+        self.schedule = Schedule::default();
+        self.schedule.add_systems((
+            ai_movement_system,
+            movement_system,
+            spawn_system,
+            shooting_system,
+            bullet_collision_system,
+            bullet_lifetime_system,
+        ));
+
+        self.world.spawn((
+            Position { x: -1500.0, y: 0.0, z: 10.0 },
+            Health::new(10000.0),
+            Base { team: Team::Player },
+        ));
+        self.world.spawn((
+            Position { x: 1500.0, y: 0.0, z: 10.0 },
+            Health::new(10000.0),
+            Base { team: Team::Enemy },
+        ));
+
+        for player in &mut self.players {
+            player.selected_ship = None;
+            player.auto_fire = false;
+        }
+
+        self.tick_count = 0;
+        self.state = RoomState::Playing;
+    }
+
+    #[allow(dead_code)]
     pub fn get_player_slot(&self, client_id: usize) -> Option<PlayerSlot> {
         for (i, player) in self.players.iter().enumerate() {
             if matches!(player.controller, SlotController::Human { client_id: id } if id == client_id) {

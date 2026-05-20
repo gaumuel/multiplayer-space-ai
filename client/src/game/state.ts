@@ -1,10 +1,18 @@
 import { Snapshot, EntityState, EntityType } from '../types';
 
+const MAX_ENTITIES = 2048;
+
 export class GameState {
   private entities = new Map<number, EntityState>();
   private lastSnapshot: Snapshot | null = null;
   private currentSnapshot: Snapshot | null = null;
   private interpolationFactor = 0;
+
+  // Pre-allocated render buffers
+  private _positions = new Float32Array(MAX_ENTITIES * 3);
+  private _colors = new Float32Array(MAX_ENTITIES * 4);
+  private _sizes = new Float32Array(MAX_ENTITIES);
+  private _types = new Float32Array(MAX_ENTITIES);
 
   getEntities(): EntityState[] {
     return Array.from(this.entities.values());
@@ -84,10 +92,20 @@ export class GameState {
   } {
     const t = this.interpolationFactor;
     const count = this.entities.size;
-    const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 4);
-    const sizes = new Float32Array(count);
-    const types = new Float32Array(count);
+
+    // Grow buffers if needed (rare)
+    if (count > this._positions.length / 3) {
+      const newSize = count * 2;
+      this._positions = new Float32Array(newSize * 3);
+      this._colors = new Float32Array(newSize * 4);
+      this._sizes = new Float32Array(newSize);
+      this._types = new Float32Array(newSize);
+    }
+
+    const positions = this._positions;
+    const colors = this._colors;
+    const sizes = this._sizes;
+    const types = this._types;
 
     let idx = 0;
     for (const entity of this.entities.values()) {

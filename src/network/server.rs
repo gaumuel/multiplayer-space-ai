@@ -10,7 +10,6 @@ use wtransport::tls::CertificateChain;
 use wtransport::tls::PrivateKey;
 use crate::network::protocol::{Snapshot, EntityType};
 use crate::network::messages::*;
-use crate::room_manager::RoomManager;
 
 /// A message from a client task to the main game loop
 #[derive(Debug)]
@@ -158,7 +157,6 @@ async fn handle_client(
                 Ok(opening_stream) => {
                     match opening_stream.await {
                         Ok(mut stream) => {
-                            use tokio::io::AsyncWriteExt;
                             if stream.write_all(&len).await.is_err() { break; }
                             if stream.write_all(&data).await.is_err() { break; }
                         }

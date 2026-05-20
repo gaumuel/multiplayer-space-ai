@@ -3,6 +3,7 @@ mod systems;
 mod network;
 mod room;
 mod room_manager;
+mod spatial;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -218,6 +219,25 @@ async fn handle_message(
                 }
             }
         }
+        ClientMessage::PlayAgain => {
+            if let Some(state) = client_states.get(&client_id) {
+                if let Some(room_id) = &state.room_id {
+                    if let Some(room) = room_manager.rooms.get_mut(room_id) {
+                        if room.state == RoomState::Ended {
+                            room.reset();
+                            let msg = OutboundEvent::Control(ServerMessage::GameStarted { mode: room.mode.clone() });
+                            let client_ids = room.all_client_ids();
+                            let senders = client_senders.read().await;
+                            for cid in client_ids {
+                                if let Some(tx) = senders.get(&cid) {
+                                    let _ = tx.send(msg.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         ClientMessage::Command { command } => {
             if let Some(state) = client_states.get(&client_id) {
                 if let Some(room_id) = &state.room_id {
@@ -235,7 +255,7 @@ async fn handle_message(
 async fn check_and_notify_start(
     _client_id: usize,
     room_manager: &mut RoomManager,
-    client_states: &HashMap<usize, ClientState>,
+    _client_states: &HashMap<usize, ClientState>,
     client_senders: &ClientSenders,
 ) {
     // Find rooms that just became ready

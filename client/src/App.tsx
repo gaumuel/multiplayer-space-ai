@@ -19,6 +19,7 @@ export default function App() {
   const [playerBaseHealth, setPlayerBaseHealth] = useState({ current: 0, max: 0 });
   const [enemyBaseHealth, setEnemyBaseHealth] = useState({ current: 0, max: 0 });
   const [tick, setTick] = useState(0);
+  const lastHudUpdate = useRef(0);
   const [team, setTeam] = useState<number>(255);
   const [roomId, setRoomId] = useState('');
   const [rooms, setRooms] = useState<any[]>([]);
@@ -33,13 +34,18 @@ export default function App() {
 
   const handleSnapshot = useCallback((snapshot: Snapshot) => {
     gameStateRef.current.applySnapshot(snapshot);
-    setEntityCount(snapshot.entities.length);
-    setTick(snapshot.tick);
 
-    const pb = gameStateRef.current.getBaseHealth(0);
-    if (pb) setPlayerBaseHealth(pb);
-    const eb = gameStateRef.current.getBaseHealth(1);
-    if (eb) setEnemyBaseHealth(eb);
+    // Only update React state (HUD) every 200ms to avoid re-render overhead
+    const now = performance.now();
+    if (now - lastHudUpdate.current > 200) {
+      lastHudUpdate.current = now;
+      setEntityCount(snapshot.entities.length);
+      setTick(snapshot.tick);
+      const pb = gameStateRef.current.getBaseHealth(0);
+      if (pb) setPlayerBaseHealth(pb);
+      const eb = gameStateRef.current.getBaseHealth(1);
+      if (eb) setEnemyBaseHealth(eb);
+    }
   }, []);
 
   const handleControl = useCallback((msg: ServerMessage) => {
@@ -342,9 +348,14 @@ export default function App() {
             {winner === team ? <span className="text-emerald-400">VICTORY</span> : <span className="text-red-400">DEFEAT</span>}
           </h1>
           <p className="text-white/60 mb-8">Team {winner === 0 ? 'Blue' : 'Red'} wins!</p>
-          <button onClick={() => { setAppState('lobby'); refreshRooms(); }} className="bg-white text-black px-8 py-3 rounded-full font-bold hover:scale-105 transition-all">
-            Back to Lobby
-          </button>
+          <div className="flex gap-4">
+            <button onClick={() => { clientRef.current?.send({ type: 'PlayAgain' }); setAppState('playing'); setWinner(null); }} className="bg-blue-600 text-white px-8 py-3 rounded-full font-bold hover:scale-105 transition-all">
+              Play Again
+            </button>
+            <button onClick={() => { clientRef.current?.send({ type: 'LeaveRoom' }); setAppState('lobby'); refreshRooms(); }} className="bg-white/10 text-white px-8 py-3 rounded-full font-bold hover:scale-105 transition-all border border-white/20">
+              Back to Lobby
+            </button>
+          </div>
         </div>
       )}
     </div>

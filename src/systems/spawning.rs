@@ -7,6 +7,7 @@ use crate::room::{Owner, PlayerSlot};
 use crate::GameTime;
 
 #[derive(Resource)]
+#[allow(dead_code)]
 pub struct SpawnConfig {
     pub max_ships_per_team: usize,
     pub spawn_interval: f64,

@@ -18,6 +18,7 @@ pub struct EntityDelta {
     pub max_health: Option<f32>,
 }
 
+#[allow(dead_code)]
 #[derive(Serialize, Clone, Debug)]
 pub enum EntityType {
     Ship,
@@ -25,18 +26,4 @@ pub enum EntityType {
     Base,
     Pickup,
     Obstacle,
-}
-
-#[derive(Serialize, Clone, Debug)]
-pub struct ControlMessage {
-    pub kind: ControlKind,
-    pub data: serde_json::Value,
-}
-
-#[derive(Serialize, Clone, Debug)]
-pub enum ControlKind {
-    BotRegister,
-    MatchStart,
-    MatchEnd,
-    Action,
 }

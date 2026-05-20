@@ -40,10 +40,6 @@ impl Health {
         self.current = (self.current - amount).max(0.0);
     }
 
-    pub fn heal(&mut self, amount: f32) {
-        self.current = (self.current + amount).min(self.max);
-    }
-
     pub fn is_dead(&self) -> bool {
         self.current <= 0.0
     }
@@ -58,6 +54,7 @@ pub enum Team {
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Ship {
     pub team: Team,
+    #[allow(dead_code)]
     pub class: ShipClass,
     pub fire_rate: f32,
     pub damage: f32,
@@ -98,38 +95,4 @@ pub struct Bullet {
     pub team: Team,
     pub damage: f32,
     pub lifetime: f32,
-}
-
-#[derive(Component, Clone, Copy, Debug)]
-pub struct Pickup {
-    pub kind: PickupKind,
-}
-
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PickupKind {
-    Damage,
-    FireRate,
-    ShieldRegen,
-}
-
-#[derive(Component, Clone, Copy, Debug)]
-pub struct Resource {
-    pub amount: f32,
-    pub regen_rate: f32,
-}
-
-impl Resource {
-    pub fn new(amount: f32, regen_rate: f32) -> Self {
-        Self { amount, regen_rate }
-    }
-}
-
-#[derive(Component, Clone, Copy, Debug)]
-pub struct Obstacle {
-    pub radius: f32,
-}
-
-#[derive(Component, Clone, Copy, Debug)]
-pub struct VisionRadius {
-    pub radius: f32,
 }

@@ -13,6 +13,8 @@ pub enum ClientMessage {
     JoinRoom { room_id: String, role: ClientRole },
     /// Leave current room
     LeaveRoom,
+    /// Request to play again in the same room
+    PlayAgain,
     /// Player command (only valid when in a room as Player)
     Command { command: PlayerCommand },
 }
