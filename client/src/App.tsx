@@ -109,7 +109,7 @@ export default function App() {
         clientRef.current?.send({ type: 'Command', command: { type: 'Shoot' } });
         return;
       }
-      if (key === 'f') {
+      if (key === 'z' || e.code === 'KeyZ') {
         e.preventDefault();
         autoFireRef.current = !autoFireRef.current;
         setAutoFire(autoFireRef.current);
@@ -305,7 +305,7 @@ export default function App() {
             </div>
             {selectedShipId !== null && (
               <div className="bg-black/40 backdrop-blur-md p-2 rounded-xl border border-yellow-400/30 text-yellow-400 font-mono text-xs">
-                Ship selected | {autoFire ? 'AUTO-FIRE ON' : 'Manual aim (F to toggle)'}
+                Ship selected | {autoFire ? 'AUTO-FIRE ON' : 'Manual aim (z to toggle)'}
               </div>
             )}
           </div>
@@ -328,7 +328,7 @@ export default function App() {
           {team !== 255 && (
             <div className="absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-none">
               <div className="bg-black/40 backdrop-blur-md px-6 py-3 rounded-xl border border-white/10 font-mono text-xs text-white/50">
-                WASE: Move | Mouse: Aim | Space: Shoot | F: Auto-fire | Tab: Select Ship | 1/2/3: Scout/Tank/Sniper
+                WASE: Move | Mouse: Aim | Space: Shoot | z: Auto-fire | Tab: Select Ship | 1/2/3: Scout/Tank/Sniper
               </div>
             </div>
           )}
