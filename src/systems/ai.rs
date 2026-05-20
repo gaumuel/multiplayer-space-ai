@@ -1,18 +1,25 @@
 use bevy_ecs::prelude::*;
 use crate::components::{Position, Velocity, Ship, Base, Team};
+use crate::room::Owner;
 
 const SHIP_SPEED: f32 = 120.0;
 
 pub fn ai_movement_system(
-    mut ships: Query<(&Ship, &Position, &mut Velocity)>,
+    mut ships: Query<(&Ship, &Position, &mut Velocity, Option<&Owner>)>,
     bases: Query<(&Base, &Position), Without<Ship>>,
 ) {
     let enemy_base_pos: Vec<(Team, f32, f32)> = bases.iter()
         .map(|(b, p)| (b.team, p.x, p.y))
         .collect();
 
-    for (ship, pos, mut vel) in ships.iter_mut() {
-        // Move toward the enemy base
+    for (ship, pos, mut vel, owner) in ships.iter_mut() {
+        // Skip player-controlled ships
+        if let Some(o) = owner {
+            if o.player_controlled {
+                continue;
+            }
+        }
+
         let target = enemy_base_pos.iter()
             .find(|(team, _, _)| *team != ship.team);
 

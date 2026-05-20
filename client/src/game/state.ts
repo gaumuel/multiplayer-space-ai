@@ -14,6 +14,10 @@ export class GameState {
     return this.entities.size;
   }
 
+  getEntity(id: number): EntityState | undefined {
+    return this.entities.get(id);
+  }
+
   getBaseHealth(team: number): { current: number; max: number } | null {
     for (const entity of this.entities.values()) {
       if (entity.entityType === EntityType.Base && entity.team === team) {

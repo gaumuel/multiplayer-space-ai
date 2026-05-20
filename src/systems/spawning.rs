@@ -3,6 +3,7 @@ use rand::Rng;
 use crate::components::{
     Position, Velocity, Health, Ship, Team, ShipClass, Base,
 };
+use crate::room::{Owner, PlayerSlot};
 use crate::GameTime;
 
 #[derive(Resource)]
@@ -85,10 +86,16 @@ fn spawn_ship(
         ShipClass::Sniper => 75.0,
     };
 
+    let slot = match team {
+        Team::Player => PlayerSlot::Player1,
+        Team::Enemy => PlayerSlot::Player2,
+    };
+
     commands.spawn((
         Position { x, y, z: 10.0 },
         Velocity { x: 0.0, y: 0.0 },
         Health::new(health),
         Ship::new(team, class),
+        Owner { slot, player_controlled: false, auto_fire: true },
     ));
 }

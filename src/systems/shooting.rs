@@ -2,6 +2,7 @@ use bevy_ecs::prelude::*;
 use crate::components::{
     Position, Velocity, Ship, Bullet, Team, Base,
 };
+use crate::room::Owner;
 use crate::GameTime;
 
 #[derive(Resource)]
@@ -29,6 +30,7 @@ struct ShipData {
     x: f32,
     y: f32,
     z: f32,
+    skip_auto_fire: bool,
 }
 
 pub fn shooting_system(
@@ -36,25 +38,36 @@ pub fn shooting_system(
     time: Res<GameTime>,
     bullet_config: Res<BulletConfig>,
     mut params: ParamSet<(
-        Query<(Entity, &Ship, &Position)>,
+        Query<(Entity, &Ship, &Position, Option<&Owner>)>,
         Query<(Entity, &mut Ship)>,
     )>,
     bases: Query<(&Base, &Position), Without<Ship>>,
 ) {
     let now = time.elapsed_secs_f64();
 
-    let ship_data: Vec<ShipData> = params.p0().iter().map(|(e, s, p)| ShipData {
-        entity: e,
-        team: s.team,
-        damage: s.damage,
-        fire_rate: s.fire_rate,
-        last_fire_time: s.last_fire_time,
-        x: p.x,
-        y: p.y,
-        z: p.z,
+    let ship_data: Vec<ShipData> = params.p0().iter().map(|(e, s, p, owner)| {
+        let skip_auto_fire = owner
+            .map(|o| o.player_controlled && !o.auto_fire)
+            .unwrap_or(false);
+        ShipData {
+            entity: e,
+            team: s.team,
+            damage: s.damage,
+            fire_rate: s.fire_rate,
+            last_fire_time: s.last_fire_time,
+            x: p.x,
+            y: p.y,
+            z: p.z,
+            skip_auto_fire,
+        }
     }).collect();
 
     for ship in &ship_data {
+        // Skip player-controlled ships that don't have auto-fire
+        if ship.skip_auto_fire {
+            continue;
+        }
+
         if now - ship.last_fire_time < ship.fire_rate as f64 {
             continue;
         }

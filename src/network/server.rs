@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock, Mutex};
 use tracing::{info, warn};
 use wtransport::endpoint::Endpoint;
 use wtransport::ServerConfig;
@@ -8,39 +9,50 @@ use wtransport::tls::Certificate;
 use wtransport::tls::CertificateChain;
 use wtransport::tls::PrivateKey;
 use crate::network::protocol::{Snapshot, EntityType};
+use crate::network::messages::*;
+use crate::room_manager::RoomManager;
 
-#[derive(Clone)]
-pub struct ClientSession {
-    pub id: usize,
+/// A message from a client task to the main game loop
+#[derive(Debug)]
+pub enum InboundEvent {
+    ClientConnected { client_id: usize },
+    ClientDisconnected { client_id: usize },
+    Message { client_id: usize, msg: ClientMessage },
 }
 
+/// A message from the main game loop to a specific client
+#[derive(Debug, Clone)]
+pub enum OutboundEvent {
+    Control(ServerMessage),
+    Snapshot(Vec<u8>), // pre-encoded binary snapshot
+}
+
+/// Per-client sender handle
+type ClientSender = mpsc::UnboundedSender<OutboundEvent>;
+
+/// Shared state for client senders
+pub type ClientSenders = Arc<RwLock<HashMap<usize, ClientSender>>>;
+
 pub struct WtServer {
-    clients: Arc<RwLock<Vec<ClientSession>>>,
-    snapshot_tx: tokio::sync::watch::Sender<Option<Snapshot>>,
     cert_der: Vec<u8>,
     key_der: Vec<u8>,
 }
 
 impl WtServer {
-    pub fn new() -> (Self, tokio::sync::watch::Receiver<Option<Snapshot>>) {
-        let (snapshot_tx, snapshot_rx) = tokio::sync::watch::channel(None);
+    pub fn new() -> Self {
         let (cert_der, key_der) = generate_self_signed_cert().expect("Failed to generate cert");
-        (
-            Self {
-                clients: Arc::new(RwLock::new(Vec::new())),
-                snapshot_tx,
-                cert_der,
-                key_der,
-            },
-            snapshot_rx,
-        )
+        Self { cert_der, key_der }
     }
 
-    pub async fn start(&self, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn start(
+        &self,
+        port: u16,
+        inbound_tx: mpsc::UnboundedSender<InboundEvent>,
+        client_senders: ClientSenders,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let cert_hash = sha256_hash(&self.cert_der);
         info!("Certificate SHA-256 (base64): {}", base64_encode(&cert_hash));
 
-        // Serve cert hash over HTTP for the client
         let hash_for_http = cert_hash.clone();
         tokio::spawn(async move {
             serve_cert_hash(hash_for_http).await;
@@ -59,20 +71,130 @@ impl WtServer {
         let server = Endpoint::server(config)?;
         info!("WebTransport server listening on 0.0.0.0:{}", port);
 
-        let clients = self.clients.clone();
-        let snapshot_rx = self.snapshot_tx.subscribe();
-
         tokio::spawn(async move {
-            run_accept_loop(server, clients, snapshot_rx).await;
+            run_accept_loop(server, inbound_tx, client_senders).await;
         });
 
         Ok(())
     }
+}
 
-    pub async fn push_snapshot(&self, snapshot: Snapshot) {
-        let _ = self.snapshot_tx.send(Some(snapshot));
+async fn run_accept_loop(
+    server: Endpoint<wtransport::endpoint::endpoint_side::Server>,
+    inbound_tx: mpsc::UnboundedSender<InboundEvent>,
+    client_senders: ClientSenders,
+) {
+    let next_id = Arc::new(Mutex::new(0usize));
+
+    loop {
+        let incoming_session = server.accept().await;
+        let inbound_tx = inbound_tx.clone();
+        let client_senders = client_senders.clone();
+        let next_id = next_id.clone();
+
+        tokio::spawn(async move {
+            let client_id = {
+                let mut id = next_id.lock().await;
+                let cid = *id;
+                *id += 1;
+                cid
+            };
+
+            info!("Incoming WebTransport connection from client {}", client_id);
+
+            if let Err(e) = handle_client(incoming_session, client_id, inbound_tx.clone(), client_senders.clone()).await {
+                warn!("Client {} disconnected: {}", client_id, e);
+            }
+
+            // Cleanup
+            client_senders.write().await.remove(&client_id);
+            let _ = inbound_tx.send(InboundEvent::ClientDisconnected { client_id });
+            info!("Client {} removed", client_id);
+        });
     }
 }
+
+async fn handle_client(
+    incoming_session: wtransport::endpoint::IncomingSession,
+    client_id: usize,
+    inbound_tx: mpsc::UnboundedSender<InboundEvent>,
+    client_senders: ClientSenders,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let session_request = incoming_session.await?;
+    let connection = session_request.accept().await?;
+    info!("Client {} accepted", client_id);
+
+    // Create outbound channel for this client
+    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<OutboundEvent>();
+    client_senders.write().await.insert(client_id, out_tx);
+
+    let _ = inbound_tx.send(InboundEvent::ClientConnected { client_id });
+
+    // Task: send outbound messages to client
+    let conn_send = connection.clone();
+    let send_task = tokio::spawn(async move {
+        while let Some(event) = out_rx.recv().await {
+            let data = match &event {
+                OutboundEvent::Control(msg) => {
+                    let json = serde_json::to_vec(msg).unwrap_or_default();
+                    // Prefix with 'C' byte to distinguish from snapshot
+                    let mut buf = Vec::with_capacity(1 + json.len());
+                    buf.push(b'C');
+                    buf.extend_from_slice(&json);
+                    buf
+                }
+                OutboundEvent::Snapshot(encoded) => {
+                    // Prefix with 'S' byte
+                    let mut buf = Vec::with_capacity(1 + encoded.len());
+                    buf.push(b'S');
+                    buf.extend_from_slice(encoded);
+                    buf
+                }
+            };
+
+            let len = (data.len() as u32).to_le_bytes();
+            let opening = conn_send.open_uni().await;
+            match opening {
+                Ok(opening_stream) => {
+                    match opening_stream.await {
+                        Ok(mut stream) => {
+                            use tokio::io::AsyncWriteExt;
+                            if stream.write_all(&len).await.is_err() { break; }
+                            if stream.write_all(&data).await.is_err() { break; }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Task: receive inbound messages from client
+    let conn_recv = connection.clone();
+    let inbound_tx_clone = inbound_tx.clone();
+    let recv_task = tokio::spawn(async move {
+        loop {
+            match conn_recv.accept_bi().await {
+                Ok((_, mut recv_stream)) => {
+                    use tokio::io::AsyncReadExt;
+                    let mut buf = Vec::new();
+                    if recv_stream.read_to_end(&mut buf).await.is_ok() {
+                        if let Ok(msg) = serde_json::from_slice::<ClientMessage>(&buf) {
+                            let _ = inbound_tx_clone.send(InboundEvent::Message { client_id, msg });
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let _ = tokio::join!(send_task, recv_task);
+    Ok(())
+}
+
+// === Utility functions (unchanged) ===
 
 async fn serve_cert_hash(hash: Vec<u8>) {
     use tokio::net::TcpListener;
@@ -104,116 +226,6 @@ async fn serve_cert_hash(hash: Vec<u8>) {
     }
 }
 
-async fn run_accept_loop(
-    server: Endpoint<wtransport::endpoint::endpoint_side::Server>,
-    clients: Arc<RwLock<Vec<ClientSession>>>,
-    snapshot_rx: tokio::sync::watch::Receiver<Option<Snapshot>>,
-) {
-    let mut next_client_id: usize = 0;
-
-    loop {
-        let incoming_session = server.accept().await;
-
-        let client_id = next_client_id;
-        next_client_id += 1;
-
-        info!("Incoming WebTransport connection from client {}", client_id);
-
-        let clients = clients.clone();
-        let snapshot_rx = snapshot_rx.clone();
-
-        tokio::spawn(async move {
-            if let Err(e) = handle_client(incoming_session, client_id, &clients, snapshot_rx).await {
-                warn!("Client {} disconnected: {}", client_id, e);
-            }
-
-            let mut clients = clients.write().await;
-            clients.retain(|c| c.id != client_id);
-            info!("Client {} removed, {} clients remaining", client_id, clients.len());
-        });
-    }
-}
-
-async fn handle_client(
-    incoming_session: wtransport::endpoint::IncomingSession,
-    client_id: usize,
-    clients: &Arc<RwLock<Vec<ClientSession>>>,
-    snapshot_rx: tokio::sync::watch::Receiver<Option<Snapshot>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let session_request = incoming_session.await?;
-    let connection = session_request.accept().await?;
-    info!("Client {} accepted", client_id);
-
-    {
-        let mut clients = clients.write().await;
-        clients.push(ClientSession { id: client_id });
-    }
-
-    let connection_clone = connection.clone();
-    let client_id_clone = client_id;
-    let mut snapshot_rx_clone = snapshot_rx.clone();
-
-    let send_task = tokio::spawn(async move {
-        loop {
-            if snapshot_rx_clone.changed().await.is_err() {
-                break;
-            }
-
-            let data = {
-                if let Some(snapshot) = snapshot_rx_clone.borrow().as_ref() {
-                    encode_snapshot(snapshot)
-                } else {
-                    continue;
-                }
-            };
-
-            let len = (data.len() as u32).to_le_bytes();
-
-            let opening = connection_clone.open_uni().await;
-            match opening {
-                Ok(opening_stream) => {
-                    match opening_stream.await {
-                        Ok(mut stream) => {
-                            use tokio::io::AsyncWriteExt;
-                            if stream.write_all(&len).await.is_err() {
-                                break;
-                            }
-                            if stream.write_all(&data).await.is_err() {
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Stream open failed for client {}: {}", client_id_clone, e);
-                            break;
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to open uni stream to client {}: {}", client_id_clone, e);
-                    break;
-                }
-            }
-        }
-    });
-
-    let connection_clone = connection.clone();
-    let client_id_clone = client_id;
-    let recv_task = tokio::spawn(async move {
-        loop {
-            match connection_clone.accept_uni().await {
-                Ok(_) => {
-                    info!("Client {} sent data", client_id_clone);
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    let _ = tokio::join!(send_task, recv_task);
-
-    Ok(())
-}
-
 fn generate_self_signed_cert() -> Result<(Vec<u8>, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
     use time::{OffsetDateTime, Duration};
 
@@ -221,7 +233,6 @@ fn generate_self_signed_cert() -> Result<(Vec<u8>, Vec<u8>), Box<dyn std::error:
     params.distinguished_name = rcgen::DistinguishedName::new();
     params.distinguished_name.push(rcgen::DnType::CommonName, "localhost");
 
-    // WebTransport serverCertificateHashes requires max 14 days validity
     let now = OffsetDateTime::now_utc();
     params.not_before = now;
     params.not_after = now + Duration::days(14);
@@ -229,14 +240,10 @@ fn generate_self_signed_cert() -> Result<(Vec<u8>, Vec<u8>), Box<dyn std::error:
     let key_pair = rcgen::KeyPair::generate()?;
     let cert = params.self_signed(&key_pair)?;
 
-    let cert_der = cert.der().to_vec();
-    let key_der = key_pair.serialize_der();
-
-    Ok((cert_der, key_der))
+    Ok((cert.der().to_vec(), key_pair.serialize_der()))
 }
 
 fn sha256_hash(data: &[u8]) -> Vec<u8> {
-    use std::io::Write;
     let digest = ring::digest::digest(&ring::digest::SHA256, data);
     digest.as_ref().to_vec()
 }
@@ -265,7 +272,7 @@ fn base64_encode(data: &[u8]) -> String {
     result
 }
 
-fn encode_snapshot(snapshot: &Snapshot) -> Vec<u8> {
+pub fn encode_snapshot(snapshot: &Snapshot) -> Vec<u8> {
     let entity_size = 4 + 4 * 3 + 1 + 1 + 1 + 4 + 1 + 4;
     let mut buf = Vec::with_capacity(8 + snapshot.entities.len() * entity_size);
 
@@ -286,7 +293,6 @@ fn encode_snapshot(snapshot: &Snapshot) -> Vec<u8> {
             EntityType::Obstacle => 4,
         };
         buf.push(entity_type);
-
         buf.push(entity.team.unwrap_or(0xFF));
 
         if let Some(health) = entity.health {
