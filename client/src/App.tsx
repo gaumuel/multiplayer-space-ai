@@ -200,13 +200,19 @@ export default function App() {
     canvas.height = window.innerHeight;
     rendererRef.current = new WebGLRenderer(canvas);
 
+    let lastTime = performance.now();
+
     const loop = (time: number) => {
+      const dt = (time - lastTime) / 1000;
+      lastTime = time;
+
       const aspect = canvas.width / canvas.height;
       const projectionMatrix = mat4.create();
       mat4.perspective(projectionMatrix, Math.PI / 4, aspect, 10, 20000);
       const viewMatrix = mat4.create();
       mat4.lookAt(viewMatrix, [0, 0, 4500], [0, 0, 0], [0, 1, 0]);
 
+      gameStateRef.current.updateParticles(dt);
       gameStateRef.current.interpolate(1.0);
       const { positions, colors, sizes, types, count } = gameStateRef.current.getInterpolatedPositions();
       rendererRef.current?.render(positions, colors, sizes, types, count, viewMatrix, projectionMatrix, time / 1000);

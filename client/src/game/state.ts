@@ -1,18 +1,30 @@
 import { Snapshot, EntityState, EntityType } from '../types';
 
 const MAX_ENTITIES = 2048;
+const MAX_PARTICLES = 500;
+
+interface Particle {
+  x: number; y: number; z: number;
+  vx: number; vy: number;
+  life: number; maxLife: number;
+  r: number; g: number; b: number;
+  size: number;
+}
 
 export class GameState {
   private entities = new Map<number, EntityState>();
   private lastSnapshot: Snapshot | null = null;
   private currentSnapshot: Snapshot | null = null;
   private interpolationFactor = 0;
+  private particles: Particle[] = [];
+  private lastBaseHealth = new Map<number, number>(); // team -> last known health
+  private lastBasePos = new Map<number, { x: number; y: number }>(); // team -> position
 
   // Pre-allocated render buffers
-  private _positions = new Float32Array(MAX_ENTITIES * 3);
-  private _colors = new Float32Array(MAX_ENTITIES * 4);
-  private _sizes = new Float32Array(MAX_ENTITIES);
-  private _types = new Float32Array(MAX_ENTITIES);
+  private _positions = new Float32Array((MAX_ENTITIES + MAX_PARTICLES) * 3);
+  private _colors = new Float32Array((MAX_ENTITIES + MAX_PARTICLES) * 4);
+  private _sizes = new Float32Array(MAX_ENTITIES + MAX_PARTICLES);
+  private _types = new Float32Array(MAX_ENTITIES + MAX_PARTICLES);
 
   getEntities(): EntityState[] {
     return Array.from(this.entities.values());
@@ -39,6 +51,19 @@ export class GameState {
     this.lastSnapshot = this.currentSnapshot;
     this.currentSnapshot = snapshot;
     this.interpolationFactor = 0;
+
+    // Track base health for explosion detection
+    for (const delta of snapshot.entities) {
+      if (delta.entity_type === EntityType.Base && delta.team !== null) {
+        this.lastBasePos.set(delta.team, { x: delta.x, y: delta.y });
+        const prevHealth = this.lastBaseHealth.get(delta.team);
+        if (prevHealth !== undefined && prevHealth > 0 && (delta.health ?? 0) <= 0) {
+          // Base just died — trigger explosion!
+          this.spawnExplosion(delta.x, delta.y, delta.team);
+        }
+        this.lastBaseHealth.set(delta.team, delta.health ?? 0);
+      }
+    }
 
     const nextIds = new Set<number>();
 
@@ -81,6 +106,51 @@ export class GameState {
 
   interpolate(factor: number) {
     this.interpolationFactor = factor;
+  }
+
+  updateParticles(dt: number) {
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt;
+      p.size *= 0.97;
+      if (p.life <= 0) {
+        this.particles.splice(i, 1);
+      }
+    }
+  }
+
+  private spawnExplosion(x: number, y: number, team: number) {
+    const count = 150;
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 100 + Math.random() * 600;
+      const life = 0.5 + Math.random() * 1.5;
+      const size = 5 + Math.random() * 25;
+
+      // Team-colored explosion with white/yellow core
+      let r: number, g: number, b: number;
+      if (Math.random() < 0.3) {
+        // White/yellow core
+        r = 1.0; g = 0.9 + Math.random() * 0.1; b = 0.3 + Math.random() * 0.4;
+      } else if (team === 0) {
+        // Blue team
+        r = 0.1 + Math.random() * 0.3; g = 0.3 + Math.random() * 0.4; b = 0.8 + Math.random() * 0.2;
+      } else {
+        // Red team
+        r = 0.8 + Math.random() * 0.2; g = 0.1 + Math.random() * 0.3; b = 0.1 + Math.random() * 0.2;
+      }
+
+      this.particles.push({
+        x, y, z: 10,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life, maxLife: life,
+        r, g, b,
+        size,
+      });
+    }
   }
 
   getInterpolatedPositions(): {
@@ -159,6 +229,22 @@ export class GameState {
       idx++;
     }
 
-    return { positions, colors, sizes, types, count };
+    // Add particles to render output
+    for (const p of this.particles) {
+      const alpha = Math.max(0, p.life / p.maxLife);
+      positions[idx * 3] = p.x;
+      positions[idx * 3 + 1] = p.y;
+      positions[idx * 3 + 2] = p.z;
+      colors[idx * 4] = p.r;
+      colors[idx * 4 + 1] = p.g;
+      colors[idx * 4 + 2] = p.b;
+      colors[idx * 4 + 3] = alpha;
+      sizes[idx] = p.size * alpha;
+      types[idx] = 1; // bullet type for glow effect
+      idx++;
+    }
+
+    const totalCount = idx;
+    return { positions, colors, sizes, types, count: totalCount };
   }
 }
