@@ -28,11 +28,24 @@ export default function App() {
     setEntityCount(snapshot.entities.length);
     setTick(snapshot.tick);
 
+    // Debug: find enemy base in raw snapshot data
+    if (snapshot.tick % 100 === 0 || snapshot.tick <= 5) {
+      const enemyBase = snapshot.entities.find(e => e.entity_type === 2 && e.team === 1);
+      console.log(`Tick ${snapshot.tick} | Enemy base raw:`, enemyBase ?? 'NOT FOUND');
+      console.log(`Tick ${snapshot.tick} | All bases:`, snapshot.entities.filter(e => e.entity_type === 2));
+      console.log(`Tick ${snapshot.tick} | First 5 entities:`, snapshot.entities.slice(0, 5));
+      console.log(`Tick ${snapshot.tick} | Total entities: ${snapshot.entities.length}`);
+    }
+
     const pb = gameStateRef.current.getBaseHealth(0);
     if (pb) setPlayerBaseHealth(pb);
 
     const eb = gameStateRef.current.getBaseHealth(1);
     if (eb) setEnemyBaseHealth(eb);
+
+    if (snapshot.tick % 100 === 0 || snapshot.tick <= 5) {
+      console.log(`Tick ${snapshot.tick} | getBaseHealth(1):`, eb);
+    }
 
     lastSnapshotTimeRef.current = performance.now();
   }, []);
@@ -60,16 +73,16 @@ export default function App() {
       const factor = Math.min(elapsedSinceSnapshot / snapshotIntervalRef.current, 1.0);
       gameStateRef.current.interpolate(factor);
 
-      const zoom = 2.0;
+      const zoom = 1.2;
       const viewportWidth = canvas.width * zoom;
       const viewportHeight = canvas.height * zoom;
       const aspect = canvas.width / canvas.height;
 
       const projectionMatrix = mat4.create();
-      mat4.perspective(projectionMatrix, Math.PI / 4, aspect, 10, 10000);
+      mat4.perspective(projectionMatrix, Math.PI / 4, aspect, 10, 20000);
 
       const viewMatrix = mat4.create();
-      const cameraZ = Math.max(viewportWidth, viewportHeight);
+      const cameraZ = 4500;
       mat4.lookAt(viewMatrix, [0, 0, cameraZ], [0, 0, 0], [0, 1, 0]);
 
       const { positions, colors, sizes, types, count } = gameStateRef.current.getInterpolatedPositions();

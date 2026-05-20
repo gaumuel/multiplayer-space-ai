@@ -12,12 +12,14 @@ use systems::movement::movement_system;
 use systems::spawning::{spawn_system, SpawnConfig, SpawnTimer};
 use systems::shooting::shooting_system;
 use systems::collision::{bullet_collision_system, bullet_lifetime_system};
+use systems::ai::ai_movement_system;
 use network::server::WtServer;
 use network::protocol::{Snapshot, EntityDelta, EntityType};
 
 #[derive(bevy_ecs::resource::Resource)]
 struct GameTime {
     elapsed: std::time::Duration,
+    delta: std::time::Duration,
     last_tick: std::time::Instant,
 }
 
@@ -25,13 +27,15 @@ impl GameTime {
     fn new() -> Self {
         Self {
             elapsed: std::time::Duration::ZERO,
+            delta: std::time::Duration::ZERO,
             last_tick: std::time::Instant::now(),
         }
     }
 
     fn tick(&mut self) {
         let now = std::time::Instant::now();
-        self.elapsed += now.duration_since(self.last_tick);
+        self.delta = now.duration_since(self.last_tick);
+        self.elapsed += self.delta;
         self.last_tick = now;
     }
 
@@ -40,7 +44,7 @@ impl GameTime {
     }
 
     fn delta_secs(&self) -> f32 {
-        self.elapsed.as_secs_f32()
+        self.delta.as_secs_f32()
     }
 }
 
@@ -50,7 +54,7 @@ fn build_snapshot(world: &mut World, tick: u32) -> Snapshot {
     let mut ship_query = world.query::<(Entity, &Position, &Ship, &Health)>();
     for (entity, pos, ship, health) in ship_query.iter(world) {
         entities.push(EntityDelta {
-            id: entity.index(),
+            id: entity.to_bits() as u32,
             x: pos.x,
             y: pos.y,
             z: pos.z,
@@ -67,7 +71,7 @@ fn build_snapshot(world: &mut World, tick: u32) -> Snapshot {
     let mut bullet_query = world.query::<(Entity, &Position, &Bullet)>();
     for (entity, pos, bullet) in bullet_query.iter(world) {
         entities.push(EntityDelta {
-            id: entity.index(),
+            id: entity.to_bits() as u32,
             x: pos.x,
             y: pos.y,
             z: pos.z,
@@ -84,7 +88,7 @@ fn build_snapshot(world: &mut World, tick: u32) -> Snapshot {
     let mut base_query = world.query::<(Entity, &Position, &Base, &Health)>();
     for (entity, pos, base, health) in base_query.iter(world) {
         entities.push(EntityDelta {
-            id: entity.index(),
+            id: entity.to_bits() as u32,
             x: pos.x,
             y: pos.y,
             z: pos.z,
@@ -126,6 +130,7 @@ async fn main() {
 
     let mut schedule = Schedule::default();
     schedule.add_systems((
+        ai_movement_system,
         movement_system,
         spawn_system,
         shooting_system,
@@ -167,9 +172,25 @@ async fn main() {
         if tick_count % 100 == 0 {
             let entity_count = world.entities().len();
             info!("Tick {} | Entities: {}", tick_count, entity_count);
+
+            let mut base_query2 = world.query::<(Entity, &Position, &Base, &Health)>();
+            for (entity, pos, base, health) in base_query2.iter(&world) {
+                if base.team == Team::Enemy {
+                    info!("  Enemy base: id_bits={} x={} health={}/{}", entity.to_bits(), pos.x, health.current, health.max);
+                }
+            }
         }
 
         let snapshot = build_snapshot(&mut world, tick_count);
+
+        if tick_count <= 3 {
+            for e in &snapshot.entities {
+                if matches!(e.entity_type, network::protocol::EntityType::Base) {
+                    info!("Base entity id={} team={:?} health={:?} max_health={:?} x={}", e.id, e.team, e.health, e.max_health, e.x);
+                }
+            }
+        }
+
         wt_server.push_snapshot(snapshot).await;
 
         let mut base_query = world.query::<(&Base, &Health)>();

@@ -26,15 +26,26 @@ pub fn bullet_collision_system(
     mut bases: Query<(Entity, &Base, &mut Health, &Position), (Without<Bullet>, Without<Ship>)>,
 ) {
     let mut bullets_to_remove = Vec::new();
+    let mut dead_entities: Vec<Entity> = Vec::new();
 
     for (bullet_entity, bullet, bullet_pos) in bullets.iter() {
+        if bullets_to_remove.contains(&bullet_entity) {
+            continue;
+        }
+
         let mut hit = false;
 
         for (ship_entity, _ship, mut health, ship_pos) in ships.iter_mut() {
+            if dead_entities.contains(&ship_entity) {
+                continue;
+            }
+            if _ship.team == bullet.team {
+                continue;
+            }
             if distance(bullet_pos, &ship_pos) < 20.0 {
                 health.damage(bullet.damage);
                 if health.is_dead() {
-                    commands.entity(ship_entity).despawn();
+                    dead_entities.push(ship_entity);
                 }
                 hit = true;
                 break;
@@ -42,13 +53,10 @@ pub fn bullet_collision_system(
         }
 
         if !hit {
-            for (base_entity, base, mut health, base_pos) in bases.iter_mut() {
+            for (_base_entity, base, mut health, base_pos) in bases.iter_mut() {
                 if base.team != bullet.team {
                     if distance(bullet_pos, &base_pos) < 50.0 {
                         health.damage(bullet.damage);
-                        if health.is_dead() {
-                            commands.entity(base_entity).despawn();
-                        }
                         hit = true;
                         break;
                     }
@@ -61,8 +69,11 @@ pub fn bullet_collision_system(
         }
     }
 
+    for entity in dead_entities {
+        commands.entity(entity).try_despawn();
+    }
     for entity in bullets_to_remove {
-        commands.entity(entity).despawn();
+        commands.entity(entity).try_despawn();
     }
 }
 
@@ -75,7 +86,7 @@ pub fn bullet_lifetime_system(
     for (entity, mut bullet) in bullets.iter_mut() {
         bullet.lifetime -= dt;
         if bullet.lifetime <= 0.0 {
-            commands.entity(entity).despawn();
+            commands.entity(entity).try_despawn();
         }
     }
 }

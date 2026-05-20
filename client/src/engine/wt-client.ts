@@ -14,7 +14,17 @@ export class WtClient {
   }
 
   async connect() {
-    this.connection = new WebTransport(this.url);
+    // Fetch the server's self-signed cert hash
+    const resp = await fetch('http://localhost:4434/cert-hash');
+    const { hash } = await resp.json();
+    const hashBytes = Uint8Array.from(atob(hash), c => c.charCodeAt(0));
+
+    this.connection = new WebTransport(this.url, {
+      serverCertificateHashes: [{
+        algorithm: 'sha-256',
+        value: hashBytes.buffer,
+      }],
+    });
     await this.connection.ready;
     this.running = true;
     this.listen();
@@ -23,24 +33,42 @@ export class WtClient {
   private async listen() {
     if (!this.connection) return;
 
-    const reader = this.connection.datagrams.readable.getReader();
-
     try {
+      const reader = this.connection.incomingUnidirectionalStreams.getReader();
+
       while (this.running) {
-        const { value, done } = await reader.read();
+        const { value: stream, done } = await reader.read();
         if (done) break;
 
-        if (value && this.onSnapshot) {
-          const snapshot = this.decodeSnapshot(value);
+        const streamReader = stream.getReader();
+        const chunks: Uint8Array[] = [];
+
+        while (true) {
+          const { value, done } = await streamReader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+
+        const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
+        const data = new Uint8Array(totalLen);
+        let offset = 0;
+        for (const chunk of chunks) {
+          data.set(chunk, offset);
+          offset += chunk.length;
+        }
+
+        // Skip 4-byte length prefix
+        const payload = data.slice(4);
+
+        if (payload.length > 0 && this.onSnapshot) {
+          const snapshot = this.decodeSnapshot(payload);
           if (snapshot) {
             this.onSnapshot(snapshot);
           }
         }
       }
     } catch (e) {
-      console.error('WebTransport datagram read error:', e);
-    } finally {
-      reader.releaseLock();
+      console.error('WebTransport stream read error:', e);
     }
   }
 
@@ -58,7 +86,7 @@ export class WtClient {
       const entities: Snapshot['entities'] = [];
 
       for (let i = 0; i < entityCount; i++) {
-        if (offset + 32 > data.byteLength) break;
+        if (offset + 18 > data.byteLength) break;
 
         const id = view.getUint32(offset, true);
         offset += 4;

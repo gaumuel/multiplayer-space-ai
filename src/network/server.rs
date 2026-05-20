@@ -17,26 +17,38 @@ pub struct ClientSession {
 pub struct WtServer {
     clients: Arc<RwLock<Vec<ClientSession>>>,
     snapshot_tx: tokio::sync::watch::Sender<Option<Snapshot>>,
+    cert_der: Vec<u8>,
+    key_der: Vec<u8>,
 }
 
 impl WtServer {
     pub fn new() -> (Self, tokio::sync::watch::Receiver<Option<Snapshot>>) {
         let (snapshot_tx, snapshot_rx) = tokio::sync::watch::channel(None);
+        let (cert_der, key_der) = generate_self_signed_cert().expect("Failed to generate cert");
         (
             Self {
                 clients: Arc::new(RwLock::new(Vec::new())),
                 snapshot_tx,
+                cert_der,
+                key_der,
             },
             snapshot_rx,
         )
     }
 
     pub async fn start(&self, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let (cert_der, key_der) = generate_self_signed_cert()?;
+        let cert_hash = sha256_hash(&self.cert_der);
+        info!("Certificate SHA-256 (base64): {}", base64_encode(&cert_hash));
+
+        // Serve cert hash over HTTP for the client
+        let hash_for_http = cert_hash.clone();
+        tokio::spawn(async move {
+            serve_cert_hash(hash_for_http).await;
+        });
 
         let identity = Identity::new(
-            CertificateChain::single(Certificate::from_der(cert_der)?),
-            PrivateKey::from_der_pkcs8(key_der),
+            CertificateChain::single(Certificate::from_der(self.cert_der.clone())?),
+            PrivateKey::from_der_pkcs8(self.key_der.clone()),
         );
 
         let config = ServerConfig::builder()
@@ -59,6 +71,36 @@ impl WtServer {
 
     pub async fn push_snapshot(&self, snapshot: Snapshot) {
         let _ = self.snapshot_tx.send(Some(snapshot));
+    }
+}
+
+async fn serve_cert_hash(hash: Vec<u8>) {
+    use tokio::net::TcpListener;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = match TcpListener::bind("0.0.0.0:4434").await {
+        Ok(l) => l,
+        Err(e) => {
+            warn!("Failed to start cert hash HTTP server: {}", e);
+            return;
+        }
+    };
+    info!("Cert hash available at http://localhost:4434/cert-hash");
+
+    loop {
+        if let Ok((mut stream, _)) = listener.accept().await {
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf).await;
+
+            let hash_b64 = base64_encode(&hash);
+            let body = format!("{{\"hash\":\"{}\"}}", hash_b64);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes()).await;
+        }
     }
 }
 
@@ -117,11 +159,37 @@ async fn handle_client(
                 break;
             }
 
-            if let Some(snapshot) = snapshot_rx_clone.borrow().as_ref() {
-                let data = encode_snapshot(snapshot);
+            let data = {
+                if let Some(snapshot) = snapshot_rx_clone.borrow().as_ref() {
+                    encode_snapshot(snapshot)
+                } else {
+                    continue;
+                }
+            };
 
-                if let Err(e) = connection_clone.send_datagram(data) {
-                    warn!("Failed to send datagram to client {}: {}", client_id_clone, e);
+            let len = (data.len() as u32).to_le_bytes();
+
+            let opening = connection_clone.open_uni().await;
+            match opening {
+                Ok(opening_stream) => {
+                    match opening_stream.await {
+                        Ok(mut stream) => {
+                            use tokio::io::AsyncWriteExt;
+                            if stream.write_all(&len).await.is_err() {
+                                break;
+                            }
+                            if stream.write_all(&data).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Stream open failed for client {}: {}", client_id_clone, e);
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to open uni stream to client {}: {}", client_id_clone, e);
                     break;
                 }
             }
@@ -147,9 +215,16 @@ async fn handle_client(
 }
 
 fn generate_self_signed_cert() -> Result<(Vec<u8>, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
+    use time::{OffsetDateTime, Duration};
+
     let mut params = rcgen::CertificateParams::new(vec!["localhost".to_string()])?;
     params.distinguished_name = rcgen::DistinguishedName::new();
     params.distinguished_name.push(rcgen::DnType::CommonName, "localhost");
+
+    // WebTransport serverCertificateHashes requires max 14 days validity
+    let now = OffsetDateTime::now_utc();
+    params.not_before = now;
+    params.not_after = now + Duration::days(14);
 
     let key_pair = rcgen::KeyPair::generate()?;
     let cert = params.self_signed(&key_pair)?;
@@ -158,6 +233,36 @@ fn generate_self_signed_cert() -> Result<(Vec<u8>, Vec<u8>), Box<dyn std::error:
     let key_der = key_pair.serialize_der();
 
     Ok((cert_der, key_der))
+}
+
+fn sha256_hash(data: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let digest = ring::digest::digest(&ring::digest::SHA256, data);
+    digest.as_ref().to_vec()
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::new();
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        result.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
+        result.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(CHARS[(triple & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
 }
 
 fn encode_snapshot(snapshot: &Snapshot) -> Vec<u8> {

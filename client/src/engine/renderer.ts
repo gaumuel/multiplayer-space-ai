@@ -19,7 +19,7 @@ void main() {
     
     vec4 clipPos = u_projection * u_view * vec4(a_position, 1.0);
     gl_Position = clipPos;
-    gl_PointSize = a_size * (300.0 / clipPos.w);
+    gl_PointSize = a_size * (1500.0 / clipPos.w);
 }`;
 
 const FRAG = `#version 300 es
@@ -70,7 +70,9 @@ out vec4 v_color;
 
 void main() {
     v_color = a_color;
-    gl_Position = u_projection * u_view * vec4(a_position, 1.0);
+    vec4 clipPos = u_projection * u_view * vec4(a_position, 1.0);
+    gl_Position = clipPos;
+    gl_PointSize = max(1.0, 50.0 / clipPos.w);
 }`;
 
 const GRID_FRAG = `#version 300 es
