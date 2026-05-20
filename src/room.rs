@@ -8,6 +8,8 @@ use crate::systems::collision::{bullet_collision_system, bullet_lifetime_system}
 use crate::systems::ai::ai_movement_system;
 use crate::network::messages::{GameMode, RoomState, SpawnShipType, ServerMessage, PlayerCommand};
 use crate::network::protocol::{Snapshot, EntityDelta, EntityType};
+use crate::wasm_ai::runner::WasmAiRunner;
+use crate::wasm_ai::interface::{serialize_game_view, WasmCommand};
 use crate::GameTime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,11 +34,23 @@ impl PlayerSlot {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum SlotController {
     Human { client_id: usize },
     AI,
+    Wasm { runner: std::sync::Arc<std::sync::Mutex<WasmAiRunner>> },
     Empty,
+}
+
+impl std::fmt::Debug for SlotController {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Human { client_id } => write!(f, "Human({})", client_id),
+            Self::AI => write!(f, "AI"),
+            Self::Wasm { .. } => write!(f, "Wasm"),
+            Self::Empty => write!(f, "Empty"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -158,8 +172,69 @@ impl Room {
             game_time.tick();
         }
 
+        // Run WASM AI for slots that have one
+        for slot_idx in 0..2 {
+            let slot = if slot_idx == 0 { PlayerSlot::Player1 } else { PlayerSlot::Player2 };
+            if let SlotController::Wasm { runner } = &self.players[slot_idx].controller {
+                let runner = runner.clone();
+                let game_state = serialize_game_view(self, slot);
+                if let Ok(mut runner) = runner.lock() {
+                    if let Ok(commands) = runner.tick(&game_state) {
+                        let team = slot.team();
+                        for cmd in commands {
+                            self.apply_wasm_command(cmd, team);
+                        }
+                    }
+                }
+            }
+        }
+
         self.schedule.run(&mut self.world);
         self.tick_count += 1;
+    }
+
+    fn apply_wasm_command(&mut self, cmd: WasmCommand, team: Team) {
+        match cmd {
+            WasmCommand::MoveShip { ship_id, dx, dy } => {
+                if let Some(entity) = self.find_owned_ship(ship_id, team) {
+                    let len = (dx * dx + dy * dy).sqrt().max(0.001);
+                    let speed = 200.0;
+                    if let Some(mut vel) = self.world.get_mut::<Velocity>(entity) {
+                        vel.x = (dx / len) * speed;
+                        vel.y = (dy / len) * speed;
+                    }
+                    if let Some(mut owner) = self.world.get_mut::<Owner>(entity) {
+                        owner.player_controlled = true;
+                    }
+                }
+            }
+            WasmCommand::ShootFrom { ship_id, dx, dy } => {
+                if let Some(entity) = self.find_owned_ship(ship_id, team) {
+                    if let Some(pos) = self.world.get::<Position>(entity) {
+                        let len = (dx * dx + dy * dy).sqrt().max(0.001);
+                        let bullet_speed = 800.0;
+                        let damage = self.world.get::<Ship>(entity).map(|s| s.damage).unwrap_or(10.0);
+                        self.world.spawn((
+                            Position { x: pos.x, y: pos.y, z: pos.z },
+                            Velocity { x: (dx / len) * bullet_speed, y: (dy / len) * bullet_speed },
+                            Bullet { team, damage, lifetime: 3.0 },
+                        ));
+                    }
+                    if let Some(mut owner) = self.world.get_mut::<Owner>(entity) {
+                        owner.player_controlled = true;
+                    }
+                }
+            }
+            WasmCommand::SetSpawnType { ship_type } => {
+                // Find the slot index for this team
+                let slot_idx = if team == Team::Player { 0 } else { 1 };
+                self.players[slot_idx].next_spawn_type = match ship_type {
+                    0 => ShipClass::Scout,
+                    1 => ShipClass::Tank,
+                    _ => ShipClass::Sniper,
+                };
+            }
+        }
     }
 
     pub fn check_game_over(&mut self) -> Option<u8> {

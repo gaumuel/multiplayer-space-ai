@@ -15,6 +15,8 @@ pub enum ClientMessage {
     LeaveRoom,
     /// Request to play again in the same room
     PlayAgain,
+    /// Upload a WASM AI module (base64-encoded bytes)
+    UploadWasm { wasm_base64: String },
     /// Player command (only valid when in a room as Player)
     Command { command: PlayerCommand },
 }

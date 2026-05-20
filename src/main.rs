@@ -4,6 +4,7 @@ mod network;
 mod room;
 mod room_manager;
 mod spatial;
+mod wasm_ai;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -219,6 +220,45 @@ async fn handle_message(
                 }
             }
         }
+        ClientMessage::UploadWasm { wasm_base64 } => {
+            if let Some(state) = client_states.get(&client_id) {
+                if let Some(room_id) = &state.room_id {
+                    // Decode base64
+                    let wasm_bytes = match base64_decode(&wasm_base64) {
+                        Some(b) => b,
+                        None => {
+                            send_to_client(client_id, client_senders, OutboundEvent::Control(
+                                ServerMessage::Error { message: "Invalid base64".to_string() }
+                            )).await;
+                            return;
+                        }
+                    };
+
+                    // Create WASM runner
+                    match wasm_ai::runner::WasmAiRunner::new(&wasm_bytes) {
+                        Ok(runner) => {
+                            if let Some(room) = room_manager.rooms.get_mut(room_id) {
+                                if let Some(slot) = room.get_player_slot(client_id) {
+                                    let slot_idx = if slot == room::PlayerSlot::Player1 { 0 } else { 1 };
+                                    room.players[slot_idx].controller = room::SlotController::Wasm {
+                                        runner: std::sync::Arc::new(std::sync::Mutex::new(runner)),
+                                    };
+                                    info!("Client {} uploaded WASM AI for slot {}", client_id, slot_idx);
+                                    send_to_client(client_id, client_senders, OutboundEvent::Control(
+                                        ServerMessage::Error { message: "WASM AI loaded successfully".to_string() }
+                                    )).await;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            send_to_client(client_id, client_senders, OutboundEvent::Control(
+                                ServerMessage::Error { message: format!("WASM load error: {}", e) }
+                            )).await;
+                        }
+                    }
+                }
+            }
+        }
         ClientMessage::PlayAgain => {
             if let Some(state) = client_states.get(&client_id) {
                 if let Some(room_id) = &state.room_id {
@@ -288,4 +328,38 @@ async fn send_to_room(room: &room::Room, client_senders: &ClientSenders, msg: Ou
             let _ = tx.send(msg.clone());
         }
     }
+}
+
+fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    const TABLE: [u8; 128] = {
+        let mut t = [255u8; 128];
+        let mut i = 0u8;
+        while i < 26 { t[(b'A' + i) as usize] = i; i += 1; }
+        i = 0;
+        while i < 26 { t[(b'a' + i) as usize] = 26 + i; i += 1; }
+        i = 0;
+        while i < 10 { t[(b'0' + i) as usize] = 52 + i; i += 1; }
+        t[b'+' as usize] = 62;
+        t[b'/' as usize] = 63;
+        t
+    };
+
+    let input = input.trim_end_matches('=');
+    let mut out = Vec::with_capacity(input.len() * 3 / 4);
+    let mut buf = 0u32;
+    let mut bits = 0u32;
+
+    for &b in input.as_bytes() {
+        if b >= 128 { return None; }
+        let val = TABLE[b as usize];
+        if val == 255 { return None; }
+        buf = (buf << 6) | val as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
 }
