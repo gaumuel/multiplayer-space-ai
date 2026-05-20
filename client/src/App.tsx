@@ -142,8 +142,6 @@ export default function App() {
       if (keys.has('a')) dx -= 1;
       if (keys.has('e')) dx += 1;
 
-      console.log('keys:', [...keys], 'dx:', dx, 'dy:', dy);
-
       if (dx === 0 && dy === 0) {
         clientRef.current?.send({ type: 'Command', command: { type: 'StopMove' } });
       } else {
