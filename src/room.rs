@@ -467,6 +467,50 @@ impl Room {
                 };
                 None
             }
+            PlayerCommand::MoveShip { ship_id, dx, dy } => {
+                if let Some(entity) = self.find_owned_ship(*ship_id, team) {
+                    let speed = 200.0;
+                    let len = (dx * dx + dy * dy).sqrt().max(0.001);
+                    if let Some(mut vel) = self.world.get_mut::<Velocity>(entity) {
+                        vel.x = (dx / len) * speed;
+                        vel.y = (dy / len) * speed;
+                    }
+                    if let Some(mut owner) = self.world.get_mut::<Owner>(entity) {
+                        owner.player_controlled = true;
+                    }
+                }
+                None
+            }
+            PlayerCommand::ShootFrom { ship_id, dx, dy } => {
+                if let Some(entity) = self.find_owned_ship(*ship_id, team) {
+                    if let Some(pos) = self.world.get::<Position>(entity) {
+                        let len = (dx * dx + dy * dy).sqrt().max(0.001);
+                        let ndx = dx / len;
+                        let ndy = dy / len;
+                        let bullet_speed = 800.0;
+                        let ship_team = self.world.get::<Ship>(entity).map(|s| s.team).unwrap_or(team);
+                        let damage = self.world.get::<Ship>(entity).map(|s| s.damage).unwrap_or(10.0);
+
+                        self.world.spawn((
+                            Position { x: pos.x, y: pos.y, z: pos.z },
+                            Velocity { x: ndx * bullet_speed, y: ndy * bullet_speed },
+                            Bullet { team: ship_team, damage, lifetime: 3.0 },
+                        ));
+                    }
+                    if let Some(mut owner) = self.world.get_mut::<Owner>(entity) {
+                        owner.player_controlled = true;
+                    }
+                }
+                None
+            }
         }
+    }
+
+    /// Find a ship entity by its encoded ID, verifying it belongs to the given team
+    fn find_owned_ship(&mut self, ship_id: u32, team: Team) -> Option<Entity> {
+        let mut query = self.world.query::<(Entity, &Ship, &Owner)>();
+        query.iter(&self.world)
+            .find(|(e, s, _)| e.to_bits() as u32 == ship_id && s.team == team)
+            .map(|(e, _, _)| e)
     }
 }

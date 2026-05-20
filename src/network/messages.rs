@@ -54,6 +54,10 @@ pub enum PlayerCommand {
     SelectShip { ship_id: u32 },
     /// Set the next spawn ship type
     SetSpawnType { ship_type: SpawnShipType },
+    /// [Bot] Move a specific ship by ID
+    MoveShip { ship_id: u32, dx: f32, dy: f32 },
+    /// [Bot] Shoot from a specific ship by ID in a direction
+    ShootFrom { ship_id: u32, dx: f32, dy: f32 },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
