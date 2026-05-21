@@ -167,25 +167,38 @@ cd ai-pathfinding && cargo build --target wasm32-unknown-unknown --release
 
 In a fair tournament, bots have the same constraints as humans — they can only control one ship at a time using `SelectNextShip`, `Move`, `Shoot`, etc. The server rejects `MoveShip`/`ShootFrom` commands.
 
-To join as a restricted bot, send:
-```json
-{"type": "JoinRoom", "room_id": "abc123", "role": "RestrictedPlayer"}
-```
+**Fair mode** is enforced at the room level. When a room is created with `fair_mode: true`, ALL players in that room are restricted — no one can cheat by joining as a full `Player`.
 
 **Allowed commands:** `SelectNextShip`, `SelectShip`, `Move`, `StopMove`, `Aim`, `Shoot`, `ToggleAutoFire`, `SetSpawnType`
 
 **Blocked commands:** `MoveShip`, `ShootFrom` (server returns an error)
 
-**Running a fair bot vs bot match:**
+**Example fair bot:** See `fair-bot/` — a complete bot that cycles through ships, moves toward enemies, aims, and shoots, all within restricted constraints.
+
+**Running Human vs Fair Bot:**
 ```bash
-cargo run                                                    # Terminal 1: server
-cd bot-client && cargo run -- --wait                         # Terminal 2: Bot A (creates room)
-# Modify bot to use "RestrictedPlayer" role in JoinRoom
-cd bot-client && cargo run -- <room_id>                      # Terminal 3: Bot B (joins and starts)
-# Both bots must Tab through ships and control one at a time
+cargo run                          # Terminal 1: server
+cd fair-bot && cargo run           # Terminal 2: fair bot creates room
+cd client && npm run dev           # Terminal 3: client
+# Browser: Refresh room list, click Join on the bot's room, click Start Game
 ```
 
-> Note: The current example bot uses `MoveShip`/`ShootFrom` (full Player mode). To make a fair bot, you'd need to rewrite it to use `SelectNextShip` + `Move` + `Shoot` instead — cycling through ships and controlling them sequentially.
+**Running Fair Bot vs Fair Bot:**
+```bash
+cargo run                          # Terminal 1: server
+cd fair-bot && cargo run           # Terminal 2: Bot A creates fair-mode room, waits
+# Note room ID from server logs (e.g., "abc123")
+cd fair-bot && cargo run -- abc123 # Terminal 3: Bot B joins and starts
+# Browser: Refresh, Watch to spectate
+```
+
+**Creating a fair room from the browser:**
+Check the "Fair mode" checkbox in the lobby before creating a room. Both players (human or bot) will be restricted.
+
+**Creating a fair room from a bot:**
+```json
+{"type": "CreateRoom", "mode": "HumanVsHuman", "obstacles": true, "fair_mode": true}
+```
 
 ## Game Rules
 
