@@ -10,7 +10,7 @@ pub enum ClientMessage {
     /// List available rooms
     ListRooms,
     /// Create a new room with a game mode
-    CreateRoom { mode: GameMode, #[serde(default = "default_true")] obstacles: bool },
+    CreateRoom { mode: GameMode, #[serde(default = "default_true")] obstacles: bool, #[serde(default)] fair_mode: bool },
     /// Join an existing room
     JoinRoom { room_id: String, role: ClientRole },
     /// Leave current room

@@ -97,6 +97,7 @@ pub struct Room {
     pub spectators: Vec<usize>,
     pub tick_count: u32,
     pub obstacles_enabled: bool,
+    pub fair_mode: bool,
 }
 
 impl Room {
@@ -164,6 +165,7 @@ impl Room {
             spectators: Vec::new(),
             tick_count: 0,
             obstacles_enabled,
+            fair_mode: false,
         }
     }
 
@@ -270,7 +272,7 @@ impl Room {
         for (i, player) in self.players.iter_mut().enumerate() {
             if matches!(player.controller, SlotController::Empty) {
                 player.controller = SlotController::Human { client_id };
-                player.restricted = restricted;
+                player.restricted = restricted || self.fair_mode;
                 let slot = if i == 0 { PlayerSlot::Player1 } else { PlayerSlot::Player2 };
                 return Some(slot);
             }

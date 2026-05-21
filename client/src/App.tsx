@@ -24,6 +24,7 @@ export default function App() {
   const [roomId, setRoomId] = useState('');
   const [rooms, setRooms] = useState<any[]>([]);
   const [obstaclesEnabled, setObstaclesEnabled] = useState(true);
+  const [fairMode, setFairMode] = useState(false);
   const [selectedShipId, setSelectedShipId] = useState<number | null>(null);
   const selectedShipIdRef = useRef<number | null>(null);
   const autoFireRef = useRef(false);
@@ -248,7 +249,7 @@ export default function App() {
 
   // Lobby actions
   const createRoom = (mode: string) => {
-    clientRef.current?.send({ type: 'CreateRoom', mode, obstacles: obstaclesEnabled });
+    clientRef.current?.send({ type: 'CreateRoom', mode, obstacles: obstaclesEnabled, fair_mode: fairMode });
   };
 
   const joinRoom = (id: string, role: string) => {
@@ -297,6 +298,16 @@ export default function App() {
               className="w-4 h-4 rounded"
             />
             <span className="text-white/70 text-sm">Enable obstacles</span>
+          </label>
+
+          <label className="flex items-center gap-2 mb-6 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={fairMode}
+              onChange={(e) => setFairMode(e.target.checked)}
+              className="w-4 h-4 rounded"
+            />
+            <span className="text-white/70 text-sm">Fair mode (one ship at a time, no multi-ship bot commands)</span>
           </label>
 
           <div className="bg-black/40 backdrop-blur-md p-4 rounded-xl border border-white/10 w-96">

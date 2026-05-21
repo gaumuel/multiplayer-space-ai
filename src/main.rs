@@ -154,9 +154,9 @@ async fn handle_message(
                 ServerMessage::RoomList { rooms }
             )).await;
         }
-        ClientMessage::CreateRoom { mode, obstacles } => {
-            let room_id = room_manager.create_room(mode.clone(), obstacles);
-            info!("Client {} created room {} (obstacles: {})", client_id, room_id, obstacles);
+        ClientMessage::CreateRoom { mode, obstacles, fair_mode } => {
+            let room_id = room_manager.create_room(mode.clone(), obstacles, fair_mode);
+            info!("Client {} created room {} (obstacles: {}, fair: {})", client_id, room_id, obstacles, fair_mode);
 
             // Join as player (or spectator for AI vs AI)
             let role = if matches!(mode, GameMode::AIVsAI) { ClientRole::Spectator } else { ClientRole::Player };

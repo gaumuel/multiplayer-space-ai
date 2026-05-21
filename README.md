@@ -105,6 +105,88 @@ cargo build --target wasm32-unknown-unknown --release
 └── design.md               # Original design document
 ```
 
+## Game Mode Combinations
+
+Any combination of slot types is supported:
+
+| Blue (Slot 0) | Red (Slot 1) | Setup Instructions |
+|---|---|---|
+| Human | Human | Both open browser, one creates PvP room, other joins via room list, click Start |
+| Human | Built-in AI | Create room, leave red slot empty, click Start (auto-fills with AI) |
+| Human | WASM AI | Create room, upload .wasm to red slot in waiting room, click Start |
+| Human | Bot Client | Create room with `--wait`, bot joins with `cargo run -- <room_id>`, bot sends StartGame |
+| Built-in AI | Built-in AI | Create room, leave both empty, click Start |
+| WASM AI | Built-in AI | Create room, upload .wasm to blue slot, click Start |
+| WASM AI | WASM AI | Create room, upload .wasm to both slots, click Start |
+| Bot Client | Built-in AI | `cd bot-client && cargo run` (creates room, auto-starts, red fills with AI) |
+| Bot Client | WASM AI | Bot creates room with `--wait`, browser uploads .wasm to red, click Start |
+| Bot Client | Bot Client | Bot A: `cargo run -- --wait`, Bot B: `cargo run -- <room_id>` |
+
+### Player Roles
+
+| Role | Capabilities |
+|------|-------------|
+| `Player` | Full control — can command ALL ships by ID (`MoveShip`/`ShootFrom`) |
+| `RestrictedPlayer` | Human-like — one ship at a time (`SelectNextShip`, `Move`, `Shoot`) |
+| `Spectator` | Read-only — receives snapshots, cannot send commands |
+
+### Starting a Human vs AI game (quickest)
+```bash
+cargo run                    # Terminal 1: start server
+cd client && npm run dev     # Terminal 2: start client
+# Open Chrome at localhost:3000, click "Play vs AI", click "Start Game"
+```
+
+### Starting a Bot vs Built-in AI game
+```bash
+cargo run                    # Terminal 1: start server
+cd bot-client && cargo run   # Terminal 2: bot creates room and starts
+# Open browser, click Refresh in lobby, click Watch to spectate
+```
+
+### Starting a Bot vs Bot game
+```bash
+cargo run                              # Terminal 1: server
+cd bot-client && cargo run -- --wait   # Terminal 2: Bot A creates room, waits
+# Note room ID from server logs (e.g., "abc123")
+cd bot-client && cargo run -- abc123   # Terminal 3: Bot B joins and starts
+# Open browser, Refresh, Watch to spectate
+```
+
+### Starting a WASM AI vs WASM AI game
+```bash
+cargo run                    # Terminal 1: start server
+cd client && npm run dev     # Terminal 2: start client
+# Build your AIs:
+cd ai-template && cargo build --target wasm32-unknown-unknown --release
+cd ai-pathfinding && cargo build --target wasm32-unknown-unknown --release
+# In browser: Create room, upload one .wasm to blue, another to red, click Start
+```
+
+### Fair Tournament (RestrictedPlayer bots)
+
+In a fair tournament, bots have the same constraints as humans — they can only control one ship at a time using `SelectNextShip`, `Move`, `Shoot`, etc. The server rejects `MoveShip`/`ShootFrom` commands.
+
+To join as a restricted bot, send:
+```json
+{"type": "JoinRoom", "room_id": "abc123", "role": "RestrictedPlayer"}
+```
+
+**Allowed commands:** `SelectNextShip`, `SelectShip`, `Move`, `StopMove`, `Aim`, `Shoot`, `ToggleAutoFire`, `SetSpawnType`
+
+**Blocked commands:** `MoveShip`, `ShootFrom` (server returns an error)
+
+**Running a fair bot vs bot match:**
+```bash
+cargo run                                                    # Terminal 1: server
+cd bot-client && cargo run -- --wait                         # Terminal 2: Bot A (creates room)
+# Modify bot to use "RestrictedPlayer" role in JoinRoom
+cd bot-client && cargo run -- <room_id>                      # Terminal 3: Bot B (joins and starts)
+# Both bots must Tab through ships and control one at a time
+```
+
+> Note: The current example bot uses `MoveShip`/`ShootFrom` (full Player mode). To make a fair bot, you'd need to rewrite it to use `SelectNextShip` + `Move` + `Shoot` instead — cycling through ships and controlling them sequentially.
+
 ## Game Rules
 
 - Arena: 3000 units wide, bases at x=±1500
