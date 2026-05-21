@@ -123,6 +123,21 @@ pub fn serialize_game_view(room: &mut Room, slot: PlayerSlot) -> Vec<u8> {
         buf.push(if *bteam == team { 0 } else { 1 });
     }
 
+    // Obstacles
+    let mut obstacles = Vec::new();
+    let mut obs_query = room.world.query::<(&Position, &Obstacle)>();
+    for (pos, obs) in obs_query.iter(&room.world) {
+        obstacles.push((pos.x, pos.y, obs.half_w * 2.0, obs.half_h * 2.0, obs.is_rect()));
+    }
+    buf.extend_from_slice(&(obstacles.len() as u16).to_le_bytes());
+    for (x, y, w, h, is_rect) in &obstacles {
+        buf.extend_from_slice(&x.to_le_bytes());
+        buf.extend_from_slice(&y.to_le_bytes());
+        buf.extend_from_slice(&w.to_le_bytes());
+        buf.extend_from_slice(&h.to_le_bytes());
+        buf.push(if *is_rect { 1 } else { 0 });
+    }
+
     buf
 }
 

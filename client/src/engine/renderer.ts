@@ -248,6 +248,7 @@ export class WebGLRenderer {
     viewMatrix: mat4,
     projectionMatrix: mat4,
     time: number,
+    rects?: { x: number; y: number; w: number; h: number; r: number; g: number; b: number }[],
   ) {
     const gl = this.gl;
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
@@ -259,6 +260,11 @@ export class WebGLRenderer {
     gl.uniformMatrix4fv(this.uGridView, false, new Float32Array(viewMatrix));
     gl.bindVertexArray(this.gridVao);
     gl.drawArrays(gl.POINTS, 0, this.gridVertexCount);
+
+    // Draw rectangles (obstacles) using the grid shader (it handles position + color)
+    if (rects && rects.length > 0) {
+      this.renderRects(rects, viewMatrix, projectionMatrix);
+    }
 
     if (count > 0) {
       gl.useProgram(this.program);
@@ -282,5 +288,59 @@ export class WebGLRenderer {
 
       gl.drawArrays(gl.POINTS, 0, count);
     }
+  }
+
+  private renderRects(rects: { x: number; y: number; w: number; h: number; r: number; g: number; b: number }[], viewMatrix: mat4, projectionMatrix: mat4) {
+    const gl = this.gl;
+    // 6 vertices per rect (2 triangles)
+    const vertCount = rects.length * 6;
+    const positions = new Float32Array(vertCount * 3);
+    const colors = new Float32Array(vertCount * 4);
+
+    let idx = 0;
+    for (const rect of rects) {
+      const x0 = rect.x - rect.w / 2;
+      const x1 = rect.x + rect.w / 2;
+      const y0 = rect.y - rect.h / 2;
+      const y1 = rect.y + rect.h / 2;
+      const z = 5.0;
+
+      // Triangle 1
+      positions[idx * 3] = x0; positions[idx * 3 + 1] = y0; positions[idx * 3 + 2] = z; idx++;
+      positions[idx * 3] = x1; positions[idx * 3 + 1] = y0; positions[idx * 3 + 2] = z; idx++;
+      positions[idx * 3] = x1; positions[idx * 3 + 1] = y1; positions[idx * 3 + 2] = z; idx++;
+      // Triangle 2
+      positions[idx * 3] = x0; positions[idx * 3 + 1] = y0; positions[idx * 3 + 2] = z; idx++;
+      positions[idx * 3] = x1; positions[idx * 3 + 1] = y1; positions[idx * 3 + 2] = z; idx++;
+      positions[idx * 3] = x0; positions[idx * 3 + 1] = y1; positions[idx * 3 + 2] = z; idx++;
+    }
+
+    // Fill colors
+    idx = 0;
+    for (const rect of rects) {
+      for (let v = 0; v < 6; v++) {
+        colors[idx * 4] = rect.r;
+        colors[idx * 4 + 1] = rect.g;
+        colors[idx * 4 + 2] = rect.b;
+        colors[idx * 4 + 3] = 0.8;
+        idx++;
+      }
+    }
+
+    gl.useProgram(this.gridProgram);
+    gl.uniformMatrix4fv(this.uGridProjection, false, new Float32Array(projectionMatrix));
+    gl.uniformMatrix4fv(this.uGridView, false, new Float32Array(viewMatrix));
+    gl.bindVertexArray(this.gridVao);
+
+    // Reuse grid buffers temporarily
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.gridPosBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.gridColorBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, colors, gl.DYNAMIC_DRAW);
+
+    gl.drawArrays(gl.TRIANGLES, 0, vertCount);
+
+    // Restore grid data
+    this.buildGrid();
   }
 }

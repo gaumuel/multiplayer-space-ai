@@ -101,6 +101,23 @@ pub struct Bullet {
 pub struct Obstacle {
     pub kind: ObstacleKind,
     pub radius: f32,
+    /// For rectangular obstacles: half-width and half-height. If both > 0, it's a rectangle.
+    pub half_w: f32,
+    pub half_h: f32,
+}
+
+impl Obstacle {
+    pub fn circle(kind: ObstacleKind, radius: f32) -> Self {
+        Self { kind, radius, half_w: 0.0, half_h: 0.0 }
+    }
+
+    pub fn rect(kind: ObstacleKind, half_w: f32, half_h: f32) -> Self {
+        Self { kind, radius: half_w.max(half_h), half_w, half_h }
+    }
+
+    pub fn is_rect(&self) -> bool {
+        self.half_w > 0.0 && self.half_h > 0.0
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

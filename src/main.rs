@@ -158,31 +158,11 @@ async fn handle_message(
             let room_id = room_manager.create_room(mode.clone(), obstacles);
             info!("Client {} created room {} (obstacles: {})", client_id, room_id, obstacles);
 
-            // Auto-join as player (unless AI vs AI)
-            let team = match mode {
-                GameMode::AIVsAI => {
-                    // AI vs AI starts immediately, client joins as spectator
-                    if let Some(room) = room_manager.rooms.get_mut(&room_id) {
-                        room.join_as_spectator(client_id);
-                        room.start();
-                    }
-                    if let Some(state) = client_states.get_mut(&client_id) {
-                        state.room_id = Some(room_id.clone());
-                    }
-                    send_to_client(client_id, client_senders, OutboundEvent::Control(
-                        ServerMessage::RoomCreated { room_id: room_id.clone(), team: 255 }
-                    )).await;
-                    send_to_client(client_id, client_senders, OutboundEvent::Control(
-                        ServerMessage::GameStarted { mode: GameMode::AIVsAI }
-                    )).await;
-                    return;
-                }
-                _ => {
-                    match room_manager.join_room(&room_id, client_id, &ClientRole::Player) {
-                        Ok((_, team)) => team,
-                        Err(_) => return,
-                    }
-                }
+            // Join as player (or spectator for AI vs AI)
+            let role = if matches!(mode, GameMode::AIVsAI) { ClientRole::Spectator } else { ClientRole::Player };
+            let team = match room_manager.join_room(&room_id, client_id, &role) {
+                Ok((_, team)) => team,
+                Err(_) => return,
             };
 
             if let Some(state) = client_states.get_mut(&client_id) {
@@ -191,9 +171,6 @@ async fn handle_message(
             send_to_client(client_id, client_senders, OutboundEvent::Control(
                 ServerMessage::RoomCreated { room_id, team }
             )).await;
-
-            // Check if game should start (HumanVsAI starts immediately since AI slot is pre-filled)
-            check_and_notify_start(client_id, room_manager, client_states, client_senders).await;
         }
         ClientMessage::JoinRoom { room_id, role } => {
             match room_manager.join_room(&room_id, client_id, &role) {
@@ -202,9 +179,17 @@ async fn handle_message(
                         state.room_id = Some(room_id.clone());
                     }
                     send_to_client(client_id, client_senders, OutboundEvent::Control(
-                        ServerMessage::RoomJoined { room_id, team, role }
+                        ServerMessage::RoomJoined { room_id: room_id.clone(), team, role }
                     )).await;
-                    check_and_notify_start(client_id, room_manager, client_states, client_senders).await;
+
+                    // If room is already playing, notify immediately
+                    if let Some(room) = room_manager.rooms.get(&room_id) {
+                        if room.state == RoomState::Playing {
+                            send_to_client(client_id, client_senders, OutboundEvent::Control(
+                                ServerMessage::GameStarted { mode: room.mode.clone() }
+                            )).await;
+                        }
+                    }
                 }
                 Err(reason) => {
                     send_to_client(client_id, client_senders, OutboundEvent::Control(
@@ -220,40 +205,76 @@ async fn handle_message(
                 }
             }
         }
-        ClientMessage::UploadWasm { wasm_base64 } => {
+        ClientMessage::UploadWasm { wasm_base64, slot } => {
             if let Some(state) = client_states.get(&client_id) {
                 if let Some(room_id) = &state.room_id {
-                    // Decode base64
-                    let wasm_bytes = match base64_decode(&wasm_base64) {
-                        Some(b) => b,
-                        None => {
+                    if let Some(room) = room_manager.rooms.get_mut(room_id) {
+                        if room.state != RoomState::Waiting {
                             send_to_client(client_id, client_senders, OutboundEvent::Control(
-                                ServerMessage::Error { message: "Invalid base64".to_string() }
+                                ServerMessage::Error { message: "Can only upload WASM before game starts".to_string() }
                             )).await;
                             return;
                         }
-                    };
 
-                    // Create WASM runner
-                    match wasm_ai::runner::WasmAiRunner::new(&wasm_bytes) {
-                        Ok(runner) => {
-                            if let Some(room) = room_manager.rooms.get_mut(room_id) {
-                                if let Some(slot) = room.get_player_slot(client_id) {
-                                    let slot_idx = if slot == room::PlayerSlot::Player1 { 0 } else { 1 };
-                                    room.players[slot_idx].controller = room::SlotController::Wasm {
-                                        runner: std::sync::Arc::new(std::sync::Mutex::new(runner)),
-                                    };
-                                    info!("Client {} uploaded WASM AI for slot {}", client_id, slot_idx);
-                                    send_to_client(client_id, client_senders, OutboundEvent::Control(
-                                        ServerMessage::Error { message: "WASM AI loaded successfully".to_string() }
-                                    )).await;
-                                }
+                        let slot_idx = slot as usize;
+                        if slot_idx > 1 {
+                            send_to_client(client_id, client_senders, OutboundEvent::Control(
+                                ServerMessage::Error { message: "Invalid slot (0 or 1)".to_string() }
+                            )).await;
+                            return;
+                        }
+
+                        let wasm_bytes = match base64_decode(&wasm_base64) {
+                            Some(b) => b,
+                            None => {
+                                send_to_client(client_id, client_senders, OutboundEvent::Control(
+                                    ServerMessage::Error { message: "Invalid base64".to_string() }
+                                )).await;
+                                return;
+                            }
+                        };
+
+                        match wasm_ai::runner::WasmAiRunner::new(&wasm_bytes) {
+                            Ok(runner) => {
+                                room.players[slot_idx].controller = room::SlotController::Wasm {
+                                    runner: std::sync::Arc::new(std::sync::Mutex::new(runner)),
+                                };
+                                info!("Client {} uploaded WASM AI for slot {}", client_id, slot_idx);
+                                send_to_client(client_id, client_senders, OutboundEvent::Control(
+                                    ServerMessage::Error { message: format!("WASM AI loaded for slot {}", slot_idx) }
+                                )).await;
+                            }
+                            Err(e) => {
+                                send_to_client(client_id, client_senders, OutboundEvent::Control(
+                                    ServerMessage::Error { message: format!("WASM load error: {}", e) }
+                                )).await;
                             }
                         }
-                        Err(e) => {
-                            send_to_client(client_id, client_senders, OutboundEvent::Control(
-                                ServerMessage::Error { message: format!("WASM load error: {}", e) }
-                            )).await;
+                    }
+                }
+            }
+        }
+        ClientMessage::StartGame => {
+            if let Some(state) = client_states.get(&client_id) {
+                if let Some(room_id) = &state.room_id {
+                    if let Some(room) = room_manager.rooms.get_mut(room_id) {
+                        if room.state == RoomState::Waiting {
+                            // Fill empty slots with built-in AI
+                            for player in &mut room.players {
+                                if matches!(player.controller, room::SlotController::Empty) {
+                                    player.controller = room::SlotController::AI;
+                                }
+                            }
+                            room.start();
+                            let msg = OutboundEvent::Control(ServerMessage::GameStarted { mode: room.mode.clone() });
+                            let client_ids = room.all_client_ids();
+                            let senders = client_senders.read().await;
+                            for cid in client_ids {
+                                if let Some(tx) = senders.get(&cid) {
+                                    let _ = tx.send(msg.clone());
+                                }
+                            }
+                            info!("Room {} started by client {}", room_id, client_id);
                         }
                     }
                 }
@@ -282,31 +303,12 @@ async fn handle_message(
             if let Some(state) = client_states.get(&client_id) {
                 if let Some(room_id) = &state.room_id {
                     if let Some(room) = room_manager.rooms.get_mut(room_id) {
-                        if let Some(response) = room.handle_command(client_id, &command) {
-                            send_to_client(client_id, client_senders, OutboundEvent::Control(response)).await;
+                        if room.state == RoomState::Playing {
+                            if let Some(response) = room.handle_command(client_id, &command) {
+                                send_to_client(client_id, client_senders, OutboundEvent::Control(response)).await;
+                            }
                         }
                     }
-                }
-            }
-        }
-    }
-}
-
-async fn check_and_notify_start(
-    _client_id: usize,
-    room_manager: &mut RoomManager,
-    _client_states: &HashMap<usize, ClientState>,
-    client_senders: &ClientSenders,
-) {
-    // Find rooms that just became ready
-    for room in room_manager.rooms.values_mut() {
-        if room.state == RoomState::Playing {
-            let msg = OutboundEvent::Control(ServerMessage::GameStarted { mode: room.mode.clone() });
-            let client_ids = room.all_client_ids();
-            let senders = client_senders.read().await;
-            for cid in client_ids {
-                if let Some(tx) = senders.get(&cid) {
-                    let _ = tx.send(msg.clone());
                 }
             }
         }

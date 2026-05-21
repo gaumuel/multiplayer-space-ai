@@ -41,15 +41,16 @@ impl RoomManager {
 
         match role {
             ClientRole::Player => {
-                let slot = room.join_as_player(client_id)
+                let slot = room.join_as_player(client_id, false)
                     .ok_or_else(|| "Room is full".to_string())?;
                 let team = slot.team_id();
 
-                // Auto-start if ready
-                if room.is_ready() && room.state == RoomState::Waiting {
-                    room.start();
-                }
-
+                Ok((slot, team))
+            }
+            ClientRole::RestrictedPlayer => {
+                let slot = room.join_as_player(client_id, true)
+                    .ok_or_else(|| "Room is full".to_string())?;
+                let team = slot.team_id();
                 Ok((slot, team))
             }
             ClientRole::Spectator => {

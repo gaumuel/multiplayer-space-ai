@@ -62,6 +62,7 @@ pub struct PlayerState {
     pub aim_dx: f32,
     pub aim_dy: f32,
     pub auto_fire: bool,
+    pub restricted: bool,
 }
 
 impl Default for PlayerState {
@@ -73,6 +74,7 @@ impl Default for PlayerState {
             aim_dx: 1.0,
             aim_dy: 0.0,
             auto_fire: false,
+            restricted: false,
         }
     }
 }
@@ -264,10 +266,11 @@ impl Room {
         }
     }
 
-    pub fn join_as_player(&mut self, client_id: usize) -> Option<PlayerSlot> {
+    pub fn join_as_player(&mut self, client_id: usize, restricted: bool) -> Option<PlayerSlot> {
         for (i, player) in self.players.iter_mut().enumerate() {
             if matches!(player.controller, SlotController::Empty) {
                 player.controller = SlotController::Human { client_id };
+                player.restricted = restricted;
                 let slot = if i == 0 { PlayerSlot::Player1 } else { PlayerSlot::Player2 };
                 return Some(slot);
             }
@@ -414,15 +417,26 @@ impl Room {
 
         let mut obs_query = self.world.query::<(Entity, &Position, &Obstacle, Option<&Health>)>();
         for (entity, pos, obs, health) in obs_query.iter(&self.world) {
+            let (h_val, mh_val) = if let Some(h) = health {
+                (Some(h.current), Some(h.max))
+            } else if obs.is_rect() {
+                (Some(obs.half_w * 2.0), Some(obs.half_h * 2.0))
+            } else {
+                (Some(obs.radius * 2.0), Some(obs.radius * 2.0))
+            };
+
+            // team byte encodes shape: 0=rect, 1=circle
+            let shape = if obs.is_rect() { 0 } else { 1 };
+
             entities.push(EntityDelta {
                 id: entity.to_bits() as u32,
                 x: pos.x,
                 y: pos.y,
                 z: pos.z,
                 entity_type: EntityType::Obstacle,
-                team: None,
-                health: health.map(|h| h.current),
-                max_health: health.map(|h| h.max),
+                team: Some(shape),
+                health: h_val,
+                max_health: mh_val,
             });
         }
 
@@ -434,6 +448,18 @@ impl Room {
         let slot_idx = self.players.iter().position(|p| {
             matches!(p.controller, SlotController::Human { client_id: id } if id == client_id)
         })?;
+
+        // Enforce restrictions: RestrictedPlayer cannot use per-ship bot commands
+        if self.players[slot_idx].restricted {
+            match command {
+                PlayerCommand::MoveShip { .. } | PlayerCommand::ShootFrom { .. } => {
+                    return Some(ServerMessage::Error {
+                        message: "Restricted mode: use Move/Shoot with selected ship only".to_string()
+                    });
+                }
+                _ => {}
+            }
+        }
 
         let slot = if slot_idx == 0 { PlayerSlot::Player1 } else { PlayerSlot::Player2 };
         let team = slot.team();

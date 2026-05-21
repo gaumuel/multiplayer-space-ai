@@ -32,6 +32,7 @@ export default function App() {
   const animFrameRef = useRef<number>(0);
   const keysRef = useRef<Set<string>>(new Set());
   const mouseWorldRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const explosionTriggered = useRef(false);
 
   const handleSnapshot = useCallback((snapshot: Snapshot) => {
     gameStateRef.current.applySnapshot(snapshot);
@@ -46,6 +47,18 @@ export default function App() {
       if (pb) setPlayerBaseHealth(pb);
       const eb = gameStateRef.current.getBaseHealth(1);
       if (eb) setEnemyBaseHealth(eb);
+
+      // Detect base death directly from snapshot
+      if (!explosionTriggered.current) {
+        if (pb && pb.current <= 0 && pb.max > 0) {
+          gameStateRef.current.triggerBaseExplosion(0);
+          explosionTriggered.current = true;
+        }
+        if (eb && eb.current <= 0 && eb.max > 0) {
+          gameStateRef.current.triggerBaseExplosion(1);
+          explosionTriggered.current = true;
+        }
+      }
     }
   }, []);
 
@@ -62,6 +75,8 @@ export default function App() {
         break;
       case 'GameStarted':
         setAppState('playing');
+        explosionTriggered.current = false;
+        gameStateRef.current.resetExplosions();
         break;
       case 'ShipSelected':
         setSelectedShipId(msg.ship_id);
@@ -73,6 +88,9 @@ export default function App() {
         break;
       case 'GameOver':
         setWinner(msg.winner_team);
+        // Trigger explosion on the losing base
+        const losingTeam = msg.winner_team === 0 ? 1 : 0;
+        gameStateRef.current.triggerBaseExplosion(losingTeam);
         // Delay showing game over screen so explosion plays out
         setTimeout(() => setAppState('ended'), 3000);
         break;
@@ -217,7 +235,8 @@ export default function App() {
       gameStateRef.current.updateParticles(dt);
       gameStateRef.current.interpolate(1.0);
       const { positions, colors, sizes, types, count } = gameStateRef.current.getInterpolatedPositions();
-      rendererRef.current?.render(positions, colors, sizes, types, count, viewMatrix, projectionMatrix, time / 1000);
+      const rects = gameStateRef.current.getObstacleRects();
+      rendererRef.current?.render(positions, colors, sizes, types, count, viewMatrix, projectionMatrix, time / 1000, rects);
       animFrameRef.current = requestAnimationFrame(loop);
     };
 
@@ -307,8 +326,43 @@ export default function App() {
       {/* WAITING */}
       {appState === 'waiting' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90">
-          <h1 className="text-4xl font-bold mb-4">Waiting for opponent...</h1>
-          <p className="text-white/60">Room: <span className="font-mono">{roomId}</span> | Team: {team === 0 ? 'Blue' : team === 1 ? 'Red' : 'Spectator'}</p>
+          <h1 className="text-4xl font-bold mb-2">Room: <span className="font-mono">{roomId}</span></h1>
+          <p className="text-white/60 mb-8">Configure slots and press Start</p>
+
+          <div className="flex gap-8 mb-8">
+            {/* Slot 0 (Blue) */}
+            <div className="bg-black/40 backdrop-blur-md p-4 rounded-xl border border-blue-400/30 w-64">
+              <h3 className="text-blue-400 font-bold mb-3">Blue (Slot 0)</h3>
+              <p className="text-white/50 text-sm mb-2">{team === 0 ? 'You (Human)' : 'Built-in AI'}</p>
+              <label className="block text-white/40 text-xs mt-2">Upload WASM AI:</label>
+              <input type="file" accept=".wasm" className="text-xs text-white/50 mt-1" onChange={async (e) => {
+                const file = e.target.files?.[0]; if (!file) return;
+                const bytes = await file.arrayBuffer();
+                const base64 = btoa(String.fromCharCode(...new Uint8Array(bytes)));
+                clientRef.current?.send({ type: 'UploadWasm', wasm_base64: base64, slot: 0 });
+              }} />
+            </div>
+
+            {/* Slot 1 (Red) */}
+            <div className="bg-black/40 backdrop-blur-md p-4 rounded-xl border border-red-400/30 w-64">
+              <h3 className="text-red-400 font-bold mb-3">Red (Slot 1)</h3>
+              <p className="text-white/50 text-sm mb-2">{team === 1 ? 'You (Human)' : 'Built-in AI'}</p>
+              <label className="block text-white/40 text-xs mt-2">Upload WASM AI:</label>
+              <input type="file" accept=".wasm" className="text-xs text-white/50 mt-1" onChange={async (e) => {
+                const file = e.target.files?.[0]; if (!file) return;
+                const bytes = await file.arrayBuffer();
+                const base64 = btoa(String.fromCharCode(...new Uint8Array(bytes)));
+                clientRef.current?.send({ type: 'UploadWasm', wasm_base64: base64, slot: 1 });
+              }} />
+            </div>
+          </div>
+
+          <button
+            onClick={() => clientRef.current?.send({ type: 'StartGame' })}
+            className="bg-emerald-600 hover:bg-emerald-500 px-10 py-4 rounded-lg font-bold text-xl"
+          >
+            Start Game
+          </button>
         </div>
       )}
 

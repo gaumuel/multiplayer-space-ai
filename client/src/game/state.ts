@@ -121,25 +121,57 @@ export class GameState {
     }
   }
 
+  triggerBaseExplosion(team: number) {
+    const pos = this.lastBasePos.get(team);
+    if (pos) {
+      this.spawnExplosion(pos.x, pos.y, team);
+      // Mark base as dead so we stop rendering it
+      this.deadBases.add(team);
+    }
+  }
+
+  resetExplosions() {
+    this.deadBases.clear();
+    this.particles = [];
+    this.lastBaseHealth.clear();
+  }
+
+  getObstacleRects(): { x: number; y: number; w: number; h: number; r: number; g: number; b: number }[] {
+    const rects: { x: number; y: number; w: number; h: number; r: number; g: number; b: number }[] = [];
+    for (const entity of this.entities.values()) {
+      if (entity.entityType === EntityType.Obstacle && entity.team === 0) {
+        const w = entity.health ?? 100;
+        const h = entity.maxHealth ?? 100;
+        rects.push({ x: entity.x, y: entity.y, w, h, r: 0.3, g: 0.3, b: 0.38 });
+      }
+    }
+    return rects;
+  }
+
+  private deadBases = new Set<number>();
+
   private spawnExplosion(x: number, y: number, team: number) {
-    const count = 150;
+    const count = 300;
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const speed = 100 + Math.random() * 600;
-      const life = 0.5 + Math.random() * 1.5;
-      const size = 5 + Math.random() * 25;
+      const speed = 50 + Math.random() * 900;
+      const life = 1.0 + Math.random() * 2.5;
+      const size = 10 + Math.random() * 50;
 
-      // Team-colored explosion with white/yellow core
       let r: number, g: number, b: number;
-      if (Math.random() < 0.3) {
-        // White/yellow core
-        r = 1.0; g = 0.9 + Math.random() * 0.1; b = 0.3 + Math.random() * 0.4;
+      const rnd = Math.random();
+      if (rnd < 0.25) {
+        // White/yellow hot core
+        r = 1.0; g = 0.85 + Math.random() * 0.15; b = 0.2 + Math.random() * 0.5;
+      } else if (rnd < 0.45) {
+        // Orange/fire
+        r = 1.0; g = 0.4 + Math.random() * 0.3; b = 0.05;
       } else if (team === 0) {
         // Blue team
-        r = 0.1 + Math.random() * 0.3; g = 0.3 + Math.random() * 0.4; b = 0.8 + Math.random() * 0.2;
+        r = 0.05 + Math.random() * 0.2; g = 0.2 + Math.random() * 0.5; b = 0.7 + Math.random() * 0.3;
       } else {
         // Red team
-        r = 0.8 + Math.random() * 0.2; g = 0.1 + Math.random() * 0.3; b = 0.1 + Math.random() * 0.2;
+        r = 0.7 + Math.random() * 0.3; g = 0.05 + Math.random() * 0.2; b = 0.05 + Math.random() * 0.15;
       }
 
       this.particles.push({
@@ -179,6 +211,17 @@ export class GameState {
 
     let idx = 0;
     for (const entity of this.entities.values()) {
+      // Skip dead bases
+      if (entity.entityType === EntityType.Base && this.deadBases.has(entity.team ?? -1)) {
+        continue;
+      }
+
+      // Skip rectangular obstacles — they're rendered separately as rects
+      // Circle obstacles (team=1) are rendered as point sprites
+      if (entity.entityType === EntityType.Obstacle && entity.team === 0) {
+        continue;
+      }
+
       positions[idx * 3] = entity.prevX + (entity.x - entity.prevX) * t;
       positions[idx * 3 + 1] = entity.prevY + (entity.y - entity.prevY) * t;
       positions[idx * 3 + 2] = entity.prevZ + (entity.z - entity.prevZ) * t;
@@ -217,18 +260,20 @@ export class GameState {
           sizes[idx] = 200;
           break;
 
-        case EntityType.Obstacle:
-          colors[idx * 4] = 0.4;
-          colors[idx * 4 + 1] = 0.4;
-          colors[idx * 4 + 2] = 0.45;
-          sizes[idx] = 80;
-          break;
-
         default:
-          colors[idx * 4] = 0.5;
-          colors[idx * 4 + 1] = 0.5;
-          colors[idx * 4 + 2] = 0.5;
-          sizes[idx] = 10;
+          // Circle obstacles (team=1) and other entities
+          if (entity.entityType === EntityType.Obstacle) {
+            colors[idx * 4] = 0.4;
+            colors[idx * 4 + 1] = 0.4;
+            colors[idx * 4 + 2] = 0.45;
+            const diameter = entity.health ?? 100;
+            sizes[idx] = diameter;
+          } else {
+            colors[idx * 4] = 0.5;
+            colors[idx * 4 + 1] = 0.5;
+            colors[idx * 4 + 2] = 0.5;
+            sizes[idx] = 10;
+          }
       }
 
       colors[idx * 4 + 3] = 1.0;

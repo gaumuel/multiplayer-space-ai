@@ -17,8 +17,10 @@ pub enum ClientMessage {
     LeaveRoom,
     /// Request to play again in the same room
     PlayAgain,
-    /// Upload a WASM AI module (base64-encoded bytes)
-    UploadWasm { wasm_base64: String },
+    /// Upload a WASM AI module (base64-encoded bytes) for a specific slot
+    UploadWasm { wasm_base64: String, slot: u8 },
+    /// Start the game (only works in Waiting state)
+    StartGame,
     /// Player command (only valid when in a room as Player)
     Command { command: PlayerCommand },
 }
@@ -36,6 +38,7 @@ pub enum GameMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientRole {
     Player,
+    RestrictedPlayer,
     Spectator,
 }
 
